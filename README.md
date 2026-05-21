@@ -1,6 +1,6 @@
 # Informatica CDGC Kit
 
-Automate Informatica Cloud Data Governance & Catalog (CDGC) — build complete demo environments, load client content from their own documents, run a live dashboard, and manage your org via Claude Code.
+A demo and deployment accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Generate a complete demo environment for any industry vertical in minutes, or build a production-ready import package directly from a client's actual governance documents. Includes a live 7-tab browser dashboard, API-based bulk import, and validated patterns for every asset type.
 
 ---
 
