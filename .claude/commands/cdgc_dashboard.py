@@ -84,6 +84,7 @@ def ensure_fresh_jwt():
             return _auth["jwt"], _auth["org_id"]
         session_id = _auth["session_id"]
         org_id     = _auth["org_id"]
+        username   = _auth["username"]
     # Token expired — re-fetch using existing session
     try:
         resp = requests.get(
@@ -98,7 +99,15 @@ def ensure_fresh_jwt():
             _auth["expires_at"] = time.time() + 25 * 60
         return jwt, org_id
     except Exception:
-        # Session stale — callers will get 401 and can re-auth via UI
+        # Session stale — attempt full re-login using stored credentials
+        import os
+        password = os.environ.get("CDGC_PASSWORD", "")
+        if username and password:
+            try:
+                jwt, org_id = do_login(username, password)
+                return jwt, org_id
+            except Exception:
+                pass
         raise
 
 
@@ -137,6 +146,32 @@ def _search(class_type, extra_filter=None, knowledge_query="*"):
     while True:
         hits, total = _search_page(class_type, from_=from_, size=PAGE,
                                    extra_filter=extra_filter, knowledge_query=knowledge_query)
+        all_hits.extend(hits)
+        from_ += len(hits)
+        if from_ >= total or not hits:
+            break
+    return all_hits
+
+
+def _search_all_segments(class_type, knowledge_query="*"):
+    """Like _search but requests all segments so selfAttributes are included."""
+    hs, _ = _headers()
+    PAGE = 100
+    all_hits, from_ = [], 0
+    while True:
+        filters = [{"type": "simple", "attribute": "core.classType", "values": [class_type]}]
+        body = {"from": from_, "size": PAGE, "filterSpec": filters}
+        url = f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery={urllib.parse.quote_plus(knowledge_query)}&segments=all"
+        resp = requests.post(url, headers=hs, json=body, timeout=30)
+        if resp.status_code == 401:
+            _auth["expires_at"] = 0
+            hs, _ = _headers()
+            resp = requests.post(url, headers=hs, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        hits = data.get("hits", [])
+        raw_total = data.get("total", len(hits))
+        total = raw_total.get("value", len(hits)) if isinstance(raw_total, dict) else int(raw_total)
         all_hits.extend(hits)
         from_ += len(hits)
         if from_ >= total or not hits:
@@ -219,21 +254,81 @@ def api_overview():
     return jsonify({"counts": results, "total": total, "refreshed_at": datetime.now().isoformat()})
 
 
+@app.route("/api/health_score")
+def api_health_score():
+    """Governance health score: % of Business Terms with at least one linked Policy."""
+    try:
+        bt_hits = _search("com.infa.ccgf.models.governance.BusinessTerm")
+        if not bt_hits:
+            return jsonify({"score": 0, "governed": 0, "total": 0, "terms": []})
+
+        hs_h, _ = _headers()
+
+        def check_bt(h):
+            s    = h.get("summary") or {}
+            name = s.get("core.name", "?")
+            ext_id = h.get("core.externalId", "")
+            lc   = s.get("core.lifecycle", "")
+            cde  = str(s.get("governance.criticalDataElement", "false")).lower() == "true"
+            try:
+                resp = requests.post(
+                    f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
+                    headers=hs_h,
+                    json={"from": 0, "size": 1,
+                          "filterSpec": [{"type": "simple", "attribute": "core.classType",
+                                          "values": ["com.infa.ccgf.models.governance.Policy"]}],
+                          "relatedAsset": {"externalId": ext_id, "scheme": "external"}},
+                    timeout=20)
+                has_policy = bool(resp.json().get("hits")) if resp.status_code == 200 else False
+            except Exception:
+                has_policy = False
+            return {"name": name, "ext_id": ext_id, "lifecycle": lc,
+                    "cde": cde, "has_policy": has_policy}
+
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            results = list(ex.map(check_bt, bt_hits))
+
+        governed = sum(1 for r in results if r["has_policy"])
+        total    = len(results)
+        score    = round(governed / total * 100) if total else 0
+        results.sort(key=lambda x: (not x["cde"], not x["has_policy"], x["name"]))
+        return jsonify({"score": score, "governed": governed, "total": total, "terms": results})
+    except Exception as e:
+        return jsonify({"error": str(e), "score": 0, "governed": 0, "total": 0, "terms": []})
+
+
 @app.route("/api/glossary")
 def api_glossary():
     q = request.args.get("q", "*")
-    hits = _search("com.infa.ccgf.models.governance.BusinessTerm",
-                   knowledge_query=q if q else "*")
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_terms   = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.BusinessTerm",
+                              q if q else "*")
+        f_domains = ex.submit(_search, "com.infa.ccgf.models.governance.Domain")
+    hits        = f_terms.result()
+    domain_hits = f_domains.result()
+
+    # Build UUID → domain name map from location field
+    uuid_to_domain = {}
+    for d in domain_hits:
+        loc = (d.get("summary") or {}).get("core.location", "")
+        uuid = loc.replace("CDGC://", "").split("/")[0]
+        name = (d.get("summary") or {}).get("core.name", "")
+        if uuid and name:
+            uuid_to_domain[uuid] = name
+
     terms = []
     for h in hits:
-        summary = h.get("summary") or {}
+        s  = h.get("summary") or {}
+        sa = h.get("selfAttributes") or {}
+        loc = s.get("core.location", "")
+        domain_uuid = loc.replace("CDGC://", "").split("/")[0]
         terms.append({
             "id":          h.get("core.externalId", ""),
-            "name":        summary.get("core.name", "?"),
-            "description": summary.get("core.description", ""),
-            "lifecycle":   summary.get("core.lifecycle", ""),
-            "cde":         str(summary.get("governance.criticalDataElement", "false")).lower() == "true",
-            "domain":      summary.get("core.domainName", ""),
+            "name":        s.get("core.name", "?"),
+            "description": s.get("core.description", ""),
+            "lifecycle":   sa.get("core.assetLifecycle", ""),
+            "cde":         sa.get("com.infa.ccgf.models.governance.isCDE", False),
+            "domain":      uuid_to_domain.get(domain_uuid, ""),
         })
     terms.sort(key=lambda x: x["name"])
     return jsonify({"terms": terms, "count": len(terms)})
@@ -242,21 +337,22 @@ def api_glossary():
 @app.route("/api/policies")
 def api_policies():
     with ThreadPoolExecutor(max_workers=2) as ex:
-        f_pol = ex.submit(_search, "com.infa.ccgf.models.governance.Policy")
-        f_reg = ex.submit(_search, "com.infa.ccgf.models.governance.Regulation")
+        f_pol = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.Policy")
+        f_reg = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.Regulation")
         pol_hits = f_pol.result()
         reg_hits = f_reg.result()
 
     def fmt(hits, asset_type):
         out = []
         for h in hits:
-            s = h.get("summary") or {}
+            s  = h.get("summary") or {}
+            sa = h.get("selfAttributes") or {}
             out.append({
                 "id":          h.get("core.externalId", ""),
                 "name":        s.get("core.name", "?"),
                 "description": s.get("core.description", ""),
-                "lifecycle":   s.get("core.lifecycle", ""),
-                "type":        s.get("governance.policyType", s.get("governance.regulationType", "")),
+                "lifecycle":   sa.get("core.assetLifecycle", ""),
+                "type":        sa.get("com.infa.ccgf.models.governance.Type", ""),
                 "asset_type":  asset_type,
             })
         return sorted(out, key=lambda x: x["name"])
@@ -269,18 +365,19 @@ def api_policies():
 
 @app.route("/api/dq_rules")
 def api_dq_rules():
-    hits = _search("com.infa.ccgf.models.governance.RuleTemplate")
+    hits = _search_all_segments("com.infa.ccgf.models.governance.RuleTemplate")
     rules = []
     for h in hits:
-        s = h.get("summary") or {}
+        s  = h.get("summary") or {}
+        sa = h.get("selfAttributes") or {}
         rules.append({
             "id":          h.get("core.externalId", ""),
             "name":        s.get("core.name", "?"),
             "description": s.get("core.description", ""),
-            "lifecycle":   s.get("core.lifecycle", ""),
-            "criticality": s.get("governance.criticality", ""),
-            "dimension":   s.get("governance.dimension", ""),
-            "automation":  str(s.get("governance.enableAutomation", "false")).lower() == "true",
+            "lifecycle":   sa.get("core.assetLifecycle", s.get("core.lifecycle", "")),
+            "criticality": sa.get("com.infa.ccgf.models.governance.Criticality", ""),
+            "dimension":   sa.get("com.infa.ccgf.models.governance.Dimension", ""),
+            "automation":  sa.get("core.enableAutomation", False),
         })
     rules.sort(key=lambda x: x["name"])
     return jsonify({"rules": rules, "count": len(rules)})
@@ -289,21 +386,24 @@ def api_dq_rules():
 @app.route("/api/ai_assets")
 def api_ai_assets():
     with ThreadPoolExecutor(max_workers=2) as ex:
-        f_sys = ex.submit(_search, "com.infa.ccgf.models.governance.AISystem")
-        f_mod = ex.submit(_search, "com.infa.ccgf.models.governance.AIModel")
+        f_sys = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.AISystem")
+        f_mod = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.AIModel")
         sys_hits = f_sys.result()
         mod_hits = f_mod.result()
 
     def fmt(hits, asset_type):
         out = []
         for h in hits:
-            s = h.get("summary") or {}
+            s  = h.get("summary") or {}
+            sa = h.get("selfAttributes") or {}
+            subtype = (sa.get("com.infa.ccgf.models.AIModel.AISystemType")
+                       or sa.get("com.infa.ccgf.models.AIModel.architectureType", ""))
             out.append({
                 "id":          h.get("core.externalId", ""),
                 "name":        s.get("core.name", "?"),
                 "description": s.get("core.description", ""),
-                "lifecycle":   s.get("core.lifecycle", ""),
-                "subtype":     s.get("governance.aiSystemType", s.get("governance.architectureType", "")),
+                "lifecycle":   sa.get("core.assetLifecycle", ""),
+                "subtype":     subtype,
                 "asset_type":  asset_type,
             })
         return sorted(out, key=lambda x: x["name"])
@@ -319,9 +419,9 @@ def api_ai_assets():
 
     # classType search returns 0 on suborg orgs — use knowledgeQuery + client-side filter
     if prefix and (not ai_systems or not ai_models):
-        for pfx_code, asset_type, subtype_key, kq in [
-            ("AIS", "AI System", "governance.aiSystemType",   "AI System"),
-            ("AIM", "AI Model",  "governance.architectureType", "AI Model"),
+        for pfx_code, asset_type, kq in [
+            ("AIS", "AI System", "AI System"),
+            ("AIM", "AI Model",  "AI Model"),
         ]:
             if asset_type == "AI System" and ai_systems:
                 continue
@@ -330,16 +430,19 @@ def api_ai_assets():
             hits, _ = _search_page(class_type=None, from_=0, size=100, knowledge_query=kq)
             bucket = []
             for h in hits:
-                s = h.get("summary") or {}
+                s  = h.get("summary") or {}
+                sa = h.get("selfAttributes") or {}
                 ext_id = h.get("core.externalId", "")
                 if not ext_id.startswith(f"{prefix}{pfx_code}"):
                     continue
+                subtype = (sa.get("com.infa.ccgf.models.AIModel.AISystemType")
+                           or sa.get("com.infa.ccgf.models.AIModel.architectureType", ""))
                 bucket.append({
                     "id":          ext_id,
                     "name":        s.get("core.name", ext_id),
                     "description": s.get("core.description", ""),
-                    "lifecycle":   s.get("core.lifecycle", ""),
-                    "subtype":     s.get(subtype_key, ""),
+                    "lifecycle":   sa.get("core.assetLifecycle", ""),
+                    "subtype":     subtype,
                     "asset_type":  asset_type,
                 })
             bucket.sort(key=lambda x: x["name"])
@@ -404,6 +507,252 @@ def api_asset_list():
         })
     assets.sort(key=lambda x: x["name"])
     return jsonify({"assets": assets, "count": len(assets)})
+
+
+@app.route("/api/workflow/<name>")
+def api_workflow(name):
+    """Run a pre-built multi-step workflow and return a structured report."""
+    from datetime import datetime as _dt
+    started = _dt.now().isoformat()
+
+    def _has_related(ext_id, class_type):
+        hs, _ = _headers()
+        try:
+            r = requests.post(
+                f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
+                headers=hs,
+                json={"from": 0, "size": 1,
+                      "filterSpec": [{"type": "simple", "attribute": "core.classType",
+                                      "values": [class_type]}],
+                      "relatedAsset": {"externalId": ext_id, "scheme": "external"}},
+                timeout=20)
+            return bool(r.json().get("hits")) if r.status_code == 200 else False
+        except Exception:
+            return False
+
+    # ── Workflow 1: Governance Gap Report ─────────────────────────────────────
+    if name == "governance_gap":
+        steps = []
+
+        steps.append({"step": 1, "label": "Fetch all Business Terms", "status": "ok"})
+        bt_hits = _search_all_segments("com.infa.ccgf.models.governance.BusinessTerm")
+
+        steps.append({"step": 2, "label": "Fetch all Domains", "status": "ok"})
+        dom_hits = _search("com.infa.ccgf.models.governance.Domain")
+        uuid_to_domain = {}
+        for d in dom_hits:
+            loc = (d.get("summary") or {}).get("core.location", "")
+            uuid = loc.replace("CDGC://", "").split("/")[0]
+            name_ = (d.get("summary") or {}).get("core.name", "")
+            if uuid and name_:
+                uuid_to_domain[uuid] = name_
+
+        steps.append({"step": 3, "label": "Check each term for linked Policy", "status": "ok"})
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            def check(h):
+                s  = h.get("summary") or {}
+                sa = h.get("selfAttributes") or {}
+                loc = s.get("core.location", "")
+                domain_uuid = loc.replace("CDGC://", "").split("/")[0]
+                ext_id = h.get("core.externalId", "")
+                return {
+                    "name":       s.get("core.name", "?"),
+                    "ext_id":     ext_id,
+                    "domain":     uuid_to_domain.get(domain_uuid, "Unknown"),
+                    "lifecycle":  sa.get("core.assetLifecycle", ""),
+                    "cde":        sa.get("com.infa.ccgf.models.governance.isCDE", False),
+                    "has_policy": _has_related(ext_id, "com.infa.ccgf.models.governance.Policy"),
+                }
+            results = list(ex.map(check, bt_hits))
+
+        ungoverned = [r for r in results if not r["has_policy"]]
+        by_domain = {}
+        for r in ungoverned:
+            by_domain.setdefault(r["domain"], []).append(r["name"])
+
+        steps.append({"step": 4, "label": "Group gaps by domain", "status": "ok"})
+        return jsonify({
+            "workflow": "Governance Gap Report",
+            "started": started,
+            "steps": steps,
+            "summary": {
+                "total_terms": len(results),
+                "governed": len(results) - len(ungoverned),
+                "ungoverned": len(ungoverned),
+                "score_pct": round((len(results) - len(ungoverned)) / len(results) * 100) if results else 0,
+            },
+            "gaps_by_domain": {d: terms for d, terms in sorted(by_domain.items())},
+            "ungoverned_terms": sorted(ungoverned, key=lambda x: (x["domain"], x["name"])),
+        })
+
+    # ── Workflow 2: CDE Risk Assessment ───────────────────────────────────────
+    elif name == "cde_risk":
+        steps = []
+        steps.append({"step": 1, "label": "Fetch all Business Terms", "status": "ok"})
+        bt_hits = _search_all_segments("com.infa.ccgf.models.governance.BusinessTerm")
+
+        cdes = []
+        for h in bt_hits:
+            sa = h.get("selfAttributes") or {}
+            if sa.get("com.infa.ccgf.models.governance.isCDE", False):
+                s = h.get("summary") or {}
+                cdes.append({"h": h, "name": s.get("core.name", "?"),
+                             "ext_id": h.get("core.externalId", ""),
+                             "lifecycle": sa.get("core.assetLifecycle", "")})
+
+        steps.append({"step": 2, "label": f"Identified {len(cdes)} Critical Data Elements", "status": "ok"})
+
+        steps.append({"step": 3, "label": "Check each CDE for Policy and DQ Rule coverage", "status": "ok"})
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            def check_cde(c):
+                return {
+                    "name":      c["name"],
+                    "ext_id":    c["ext_id"],
+                    "lifecycle": c["lifecycle"],
+                    "has_policy":   _has_related(c["ext_id"], "com.infa.ccgf.models.governance.Policy"),
+                    "has_dq_rule":  _has_related(c["ext_id"], "com.infa.ccgf.models.governance.RuleTemplate"),
+                }
+            assessed = list(ex.map(check_cde, cdes))
+
+        at_risk = [c for c in assessed if not c["has_policy"] or not c["has_dq_rule"]]
+        steps.append({"step": 4, "label": "Identified at-risk CDEs", "status": "ok"})
+        return jsonify({
+            "workflow": "CDE Risk Assessment",
+            "started": started,
+            "steps": steps,
+            "summary": {
+                "total_cdes": len(assessed),
+                "fully_governed": sum(1 for c in assessed if c["has_policy"] and c["has_dq_rule"]),
+                "missing_policy": sum(1 for c in assessed if not c["has_policy"]),
+                "missing_dq_rule": sum(1 for c in assessed if not c["has_dq_rule"]),
+                "at_risk": len(at_risk),
+            },
+            "at_risk_cdes": sorted(at_risk, key=lambda x: x["name"]),
+            "all_cdes": sorted(assessed, key=lambda x: x["name"]),
+        })
+
+    # ── Workflow 3: DQ Coverage Check ─────────────────────────────────────────
+    elif name == "dq_coverage":
+        steps = []
+        steps.append({"step": 1, "label": "Fetch all Business Terms and DQ Rules", "status": "ok"})
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_bt = ex.submit(_search, "com.infa.ccgf.models.governance.BusinessTerm")
+            f_dq = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.RuleTemplate")
+        bt_hits = f_bt.result()
+        dq_hits = f_dq.result()
+
+        steps.append({"step": 2, "label": f"Found {len(bt_hits)} terms and {len(dq_hits)} DQ rules", "status": "ok"})
+        steps.append({"step": 3, "label": "Check which terms have a linked DQ rule", "status": "ok"})
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            def check_dq(h):
+                s = h.get("summary") or {}
+                ext_id = h.get("core.externalId", "")
+                return {
+                    "name":        s.get("core.name", "?"),
+                    "ext_id":      ext_id,
+                    "has_dq_rule": _has_related(ext_id, "com.infa.ccgf.models.governance.RuleTemplate"),
+                }
+            results = list(ex.map(check_dq, bt_hits))
+
+        no_dq = [r for r in results if not r["has_dq_rule"]]
+        dq_list = [{"name": (d.get("summary") or {}).get("core.name",""),
+                    "criticality": (d.get("selfAttributes") or {}).get("com.infa.ccgf.models.governance.Criticality",""),
+                    "dimension":   (d.get("selfAttributes") or {}).get("com.infa.ccgf.models.governance.Dimension",""),
+                    "lifecycle":   (d.get("selfAttributes") or {}).get("core.assetLifecycle","")}
+                   for d in dq_hits]
+        return jsonify({
+            "workflow": "DQ Coverage Check",
+            "started": started,
+            "steps": steps,
+            "summary": {
+                "total_terms": len(results),
+                "terms_with_dq": len(results) - len(no_dq),
+                "terms_without_dq": len(no_dq),
+                "total_dq_rules": len(dq_hits),
+                "coverage_pct": round((len(results) - len(no_dq)) / len(results) * 100) if results else 0,
+            },
+            "terms_without_dq_rule": sorted(no_dq, key=lambda x: x["name"]),
+            "dq_rules": sorted(dq_list, key=lambda x: x["name"]),
+        })
+
+    # ── Workflow 4: AI Governance Audit ───────────────────────────────────────
+    elif name == "ai_audit":
+        steps = []
+        steps.append({"step": 1, "label": "Fetch all AI Systems and AI Models", "status": "ok"})
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_sys = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.AISystem")
+            f_mod = ex.submit(_search_all_segments, "com.infa.ccgf.models.governance.AIModel")
+        sys_hits = f_sys.result()
+        mod_hits = f_mod.result()
+
+        # fallback for suborg prefix
+        prefix = _auth.get("prefix") or _auto_detect_prefix() or ""
+        if prefix and not sys_hits:
+            hits, _ = _search_page(class_type=None, from_=0, size=100, knowledge_query="AI System")
+            sys_hits = [h for h in hits if h.get("core.externalId","").startswith(f"{prefix}AIS")]
+        if prefix and not mod_hits:
+            hits, _ = _search_page(class_type=None, from_=0, size=100, knowledge_query="AI Model")
+            mod_hits = [h for h in hits if h.get("core.externalId","").startswith(f"{prefix}AIM")]
+
+        steps.append({"step": 2, "label": f"Found {len(sys_hits)} AI Systems and {len(mod_hits)} AI Models", "status": "ok"})
+        steps.append({"step": 3, "label": "Check each for linked Policy and Data Set", "status": "ok"})
+
+        all_ai = [(h, "AI System") for h in sys_hits] + [(h, "AI Model") for h in mod_hits]
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            def check_ai(pair):
+                h, atype = pair
+                s  = h.get("summary") or {}
+                sa = h.get("selfAttributes") or {}
+                ext_id = h.get("core.externalId","")
+                return {
+                    "name":       s.get("core.name","?"),
+                    "ext_id":     ext_id,
+                    "asset_type": atype,
+                    "lifecycle":  sa.get("core.assetLifecycle",""),
+                    "has_policy":  _has_related(ext_id, "com.infa.ccgf.models.governance.Policy"),
+                    "has_dataset": _has_related(ext_id, "com.infa.ccgf.models.governance.DataSet"),
+                }
+            assessed = list(ex.map(check_ai, all_ai))
+
+        at_risk = [a for a in assessed if not a["has_policy"] or not a["has_dataset"]]
+        return jsonify({
+            "workflow": "AI Governance Audit",
+            "started": started,
+            "steps": steps,
+            "summary": {
+                "total_ai_assets": len(assessed),
+                "fully_governed":  sum(1 for a in assessed if a["has_policy"] and a["has_dataset"]),
+                "missing_policy":  sum(1 for a in assessed if not a["has_policy"]),
+                "missing_dataset": sum(1 for a in assessed if not a["has_dataset"]),
+                "at_risk": len(at_risk),
+            },
+            "at_risk_assets": sorted(at_risk, key=lambda x: (x["asset_type"], x["name"])),
+            "all_assets": sorted(assessed, key=lambda x: (x["asset_type"], x["name"])),
+        })
+
+    return jsonify({"error": f"Unknown workflow: {name}"}), 404
+
+
+@app.route("/api/proxy/search")
+def api_proxy_search():
+    q        = request.args.get("q", "*")
+    asset_type = request.args.get("assetType", "")
+    filters = []
+    if asset_type:
+        ct = asset_type if "." in asset_type else f"com.infa.ccgf.models.governance.{asset_type}"
+        filters.append({"type": "simple", "attribute": "core.classType", "values": [ct]})
+    hits = _search(ct if asset_type else None, knowledge_query=q) if asset_type else \
+           _search_page(class_type=None, from_=0, size=20, knowledge_query=q)[0]
+    results = []
+    for h in hits[:20]:
+        s = h.get("summary") or {}
+        results.append({
+            "externalId":  h.get("core.externalId", ""),
+            "name":        s.get("core.name", ""),
+            "description": s.get("core.description", ""),
+            "classType":   (h.get("systemAttributes") or {}).get("core.classType", "").split(".")[-1],
+        })
+    return jsonify({"query": q, "count": len(results), "results": results})
 
 
 @app.route("/api/set_prefix", methods=["POST"])
@@ -560,6 +909,26 @@ HTML_PAGE = """<!DOCTYPE html>
     .lc-review{color:#7dd3fc}
     .lc-obsolete{color:#f87171}
 
+    /* ── Health score ────────────────────────────────────────────── */
+    .health-card{background:linear-gradient(135deg,#0f2d1f,#1e293b);border:1px solid #16a34a;
+                 border-radius:12px;padding:20px 24px;margin-bottom:20px;
+                 display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+    .health-ring-wrap{position:relative;width:90px;height:90px;flex-shrink:0}
+    .health-ring{transform:rotate(-90deg)}
+    .health-ring-bg{fill:none;stroke:#1e3a2a;stroke-width:8}
+    .health-ring-fg{fill:none;stroke-width:8;stroke-linecap:round;
+                    transition:stroke-dashoffset 1s ease,stroke .4s}
+    .health-pct{position:absolute;inset:0;display:flex;align-items:center;
+                justify-content:center;font-size:22px;font-weight:800;color:#f1f5f9}
+    .health-info{flex:1;min-width:160px}
+    .health-title{font-size:13px;font-weight:700;color:#f1f5f9;margin-bottom:4px}
+    .health-sub{font-size:12px;color:#64748b;margin-bottom:10px}
+    .health-bar-wrap{background:#0f2d1f;border-radius:6px;height:8px;overflow:hidden;width:100%;max-width:320px}
+    .health-bar-fill{height:100%;border-radius:6px;transition:width 1s ease}
+    .health-breakdown{display:flex;gap:16px;margin-top:10px;flex-wrap:wrap}
+    .health-stat{font-size:11px;color:#64748b}
+    .health-stat span{color:#f1f5f9;font-weight:600}
+
     /* ── Section label ───────────────────────────────────────────── */
     .section-label{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px}
 
@@ -570,6 +939,73 @@ HTML_PAGE = """<!DOCTYPE html>
     .prefix-input{background:#0f172a;border:1px solid #334155;border-radius:6px;
                   color:#e2e8f0;padding:6px 10px;font-size:13px;width:120px;outline:none}
     .prefix-input:focus{border-color:#3b82f6}
+
+    /* ── Workflows ───────────────────────────────────────────────── */
+    .wf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:28px}
+    .wf-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:20px;cursor:pointer;transition:all .2s}
+    .wf-card:hover{border-color:#3b82f6;background:#1e3a5f}
+    .wf-card.running{border-color:#fbbf24;background:#1c1706}
+    .wf-card.done{border-color:#16a34a;background:#0f2d1f}
+    .wf-card.error{border-color:#ef4444;background:#1c0606}
+    .wf-icon{font-size:28px;margin-bottom:10px}
+    .wf-title{font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:6px}
+    .wf-desc{font-size:12px;color:#64748b;margin-bottom:14px;line-height:1.5}
+    .wf-steps{font-size:11px;color:#475569;margin-bottom:14px}
+    .wf-run-btn{background:#1d4ed8;color:#fff;border:none;border-radius:6px;padding:7px 16px;
+                font-size:12px;font-weight:600;cursor:pointer;transition:background .15s}
+    .wf-run-btn:hover{background:#2563eb}
+    .wf-run-btn:disabled{background:#334155;cursor:not-allowed;color:#475569}
+    .wf-result{background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:20px;margin-top:20px}
+    .wf-result-title{font-size:13px;font-weight:700;color:#f1f5f9;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+    .wf-summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+    .wf-summary-stat{background:#1e293b;border-radius:6px;padding:10px 14px;text-align:center}
+    .wf-summary-stat .big{font-size:24px;font-weight:800;color:#f1f5f9}
+    .wf-summary-stat .lbl{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+    .wf-steps-log{margin-bottom:14px}
+    .wf-step-row{font-size:11px;color:#64748b;padding:3px 0;display:flex;gap:8px;align-items:center}
+    .wf-step-ok{color:#6ee7b7}
+    .wf-table{width:100%;border-collapse:collapse;font-size:12px}
+    .wf-table th{text-align:left;color:#64748b;font-weight:600;padding:6px 10px;border-bottom:1px solid #1e293b;font-size:11px;text-transform:uppercase}
+    .wf-table td{padding:7px 10px;border-bottom:1px solid #0f172a;color:#94a3b8;vertical-align:top}
+    .wf-table tr:last-child td{border-bottom:none}
+    .wf-table td:first-child{color:#f1f5f9;font-weight:500}
+    .risk-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px}
+    .risk-high{background:#450a0a;color:#fca5a5}
+    .risk-ok{background:#064e3b;color:#6ee7b7}
+
+    /* ── API Explorer ────────────────────────────────────────────── */
+    .api-explorer{display:grid;grid-template-columns:260px 1fr;gap:0;height:calc(100vh - 200px);min-height:400px}
+    .api-sidebar{background:#0f172a;border-right:1px solid #1e293b;overflow-y:auto;padding:12px 0}
+    .api-group-label{font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;
+                     letter-spacing:1px;padding:10px 16px 4px}
+    .api-endpoint{padding:8px 16px;cursor:pointer;border-left:3px solid transparent;transition:all .15s}
+    .api-endpoint:hover{background:#1e293b;border-left-color:#334155}
+    .api-endpoint.active{background:#1e3a5f;border-left-color:#3b82f6}
+    .api-method{display:inline-block;font-size:10px;font-weight:700;padding:1px 5px;
+                border-radius:3px;margin-right:6px;font-family:monospace}
+    .method-get{background:#064e3b;color:#6ee7b7}
+    .method-post{background:#1e3a5f;color:#7dd3fc}
+    .api-path{font-size:12px;color:#94a3b8;font-family:monospace}
+    .api-endpoint.active .api-path{color:#e2e8f0}
+    .api-main{display:flex;flex-direction:column;overflow:hidden}
+    .api-request-bar{background:#1e293b;border-bottom:1px solid #334155;padding:16px 20px;flex-shrink:0}
+    .api-request-url{font-family:monospace;font-size:12px;color:#7dd3fc;word-break:break-all;margin-bottom:10px}
+    .api-params{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .api-param-label{font-size:11px;color:#64748b}
+    .api-param-input{background:#0f172a;border:1px solid #334155;border-radius:4px;
+                     color:#e2e8f0;padding:4px 8px;font-size:12px;outline:none;min-width:160px}
+    .api-param-input:focus{border-color:#3b82f6}
+    .api-desc{font-size:12px;color:#64748b;margin-bottom:8px}
+    .api-response{flex:1;overflow:auto;padding:16px 20px}
+    .api-response-meta{display:flex;gap:16px;margin-bottom:10px;align-items:center}
+    .api-status{font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px}
+    .status-ok{background:#064e3b;color:#6ee7b7}
+    .status-err{background:#450a0a;color:#fca5a5}
+    .api-time{font-size:11px;color:#475569}
+    .api-json{background:#0f172a;border:1px solid #1e293b;border-radius:6px;padding:14px;
+              font-family:monospace;font-size:12px;color:#94a3b8;white-space:pre-wrap;
+              word-break:break-all;overflow:auto;max-height:100%}
+    .api-placeholder{color:#334155;font-size:13px;text-align:center;padding:60px 20px}
   </style>
 </head>
 <body>
@@ -590,6 +1026,8 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="tab" onclick="showTab('policies')">Policies &amp; Regs <span class="tab-badge" id="badge-policies">—</span></div>
   <div class="tab" onclick="showTab('dq')">DQ Rules <span class="tab-badge" id="badge-dq">—</span></div>
   <div class="tab" onclick="showTab('ai')">AI Assets <span class="tab-badge" id="badge-ai">—</span></div>
+  <div class="tab" onclick="showTab('workflows')">Workflows</div>
+  <div class="tab" onclick="showTab('apiexplorer')">API Explorer</div>
 </div>
 
 <!-- ═════════════════════════ OVERVIEW ═════════════════════════ -->
@@ -605,6 +1043,30 @@ HTML_PAGE = """<!DOCTYPE html>
       <input class="prefix-input" id="prefix-input" placeholder="e.g. RKF" maxlength="6">
       <button class="btn" onclick="savePrefix()">Save</button>
       <span style="font-size:11px;color:#475569;">Only needed if AI counts show 0. Enter the 2–4 letter prefix used when assets were imported.</span>
+    </div>
+
+    <div class="health-card" id="health-card" style="display:none">
+      <div class="health-ring-wrap">
+        <svg class="health-ring" width="90" height="90" viewBox="0 0 90 90">
+          <circle class="health-ring-bg" cx="45" cy="45" r="37"/>
+          <circle class="health-ring-fg" id="health-ring-fg" cx="45" cy="45" r="37"
+                  stroke-dasharray="232.5" stroke-dashoffset="232.5"/>
+        </svg>
+        <div class="health-pct" id="health-pct">—</div>
+      </div>
+      <div class="health-info">
+        <div class="health-title">Governance Health Score</div>
+        <div class="health-sub">Business Terms with a linked Policy</div>
+        <div class="health-bar-wrap">
+          <div class="health-bar-fill" id="health-bar-fill" style="width:0%"></div>
+        </div>
+        <div class="health-breakdown">
+          <div class="health-stat">Governed: <span id="hs-governed">—</span></div>
+          <div class="health-stat">Total Terms: <span id="hs-total">—</span></div>
+          <div class="health-stat">Unlinked: <span id="hs-unlinked">—</span></div>
+        </div>
+      </div>
+      <button class="btn" onclick="loadHealthScore()" style="align-self:flex-start">↻</button>
     </div>
 
     <div id="overview-total" class="total-card" style="display:none">
@@ -770,6 +1232,101 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- ════════════════════════ WORKFLOWS ══════════════════════════ -->
+<div id="tab-workflows" class="panel">
+  <div class="container">
+    <div class="toolbar" style="margin-bottom:20px">
+      <div style="color:#64748b;font-size:13px">Pre-built multi-step API workflows — click Run to execute live</div>
+    </div>
+
+    <div class="wf-grid">
+
+      <div class="wf-card" id="wf-card-governance_gap">
+        <div class="wf-icon">🔍</div>
+        <div class="wf-title">Governance Gap Report</div>
+        <div class="wf-desc">Identifies all Business Terms with no linked Policy, grouped by Domain.</div>
+        <div class="wf-steps">Step 1: Fetch all Terms → Step 2: Fetch Domains → Step 3: Check Policy links → Step 4: Group by Domain</div>
+        <button class="wf-run-btn" id="wf-btn-governance_gap" onclick="runWorkflow('governance_gap')">▶ Run</button>
+      </div>
+
+      <div class="wf-card" id="wf-card-cde_risk">
+        <div class="wf-icon">⚠️</div>
+        <div class="wf-title">CDE Risk Assessment</div>
+        <div class="wf-desc">Finds Critical Data Elements missing a Policy or DQ Rule — your highest-risk assets.</div>
+        <div class="wf-steps">Step 1: Fetch all Terms → Step 2: Filter CDEs → Step 3: Check Policy + DQ Rule coverage</div>
+        <button class="wf-run-btn" id="wf-btn-cde_risk" onclick="runWorkflow('cde_risk')">▶ Run</button>
+      </div>
+
+      <div class="wf-card" id="wf-card-dq_coverage">
+        <div class="wf-icon">✅</div>
+        <div class="wf-title">DQ Coverage Check</div>
+        <div class="wf-desc">Shows which Business Terms have a linked DQ Rule and which are uncovered.</div>
+        <div class="wf-steps">Step 1: Fetch Terms + DQ Rules → Step 2: Check Rule links → Step 3: Calculate coverage %</div>
+        <button class="wf-run-btn" id="wf-btn-dq_coverage" onclick="runWorkflow('dq_coverage')">▶ Run</button>
+      </div>
+
+      <div class="wf-card" id="wf-card-ai_audit">
+        <div class="wf-icon">🤖</div>
+        <div class="wf-title">AI Governance Audit</div>
+        <div class="wf-desc">Audits all AI Systems and Models for linked Policies and Data Sets.</div>
+        <div class="wf-steps">Step 1: Fetch AI assets → Step 2: Check Policy links → Step 3: Check Data Set links</div>
+        <button class="wf-run-btn" id="wf-btn-ai_audit" onclick="runWorkflow('ai_audit')">▶ Run</button>
+      </div>
+
+    </div>
+
+    <div id="wf-result-area"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════ API EXPLORER ═════════════════════════ -->
+<div id="tab-apiexplorer" class="panel">
+  <div class="api-explorer">
+
+    <!-- Sidebar: endpoint list -->
+    <div class="api-sidebar">
+      <div class="api-group-label">Identity</div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'POST','/identity-service/api/v1/Login','Authenticate and get a session ID',[],'login')">
+        <span class="api-method method-post">POST</span><span class="api-path">/v1/Login</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/identity-service/api/v1/jwt/Token','Exchange session ID for a JWT bearer token',[],'jwt')">
+        <span class="api-method method-get">GET</span><span class="api-path">/v1/jwt/Token</span>
+      </div>
+
+      <div class="api-group-label">Search</div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'POST','/data360/search/v1/assets','Search all CDGC assets by keyword and optional asset type',[{name:'query',placeholder:'e.g. Capital Ratio',default:'*'},{name:'assetType',placeholder:'e.g. BusinessTerm (optional)',default:''}],'search')">
+        <span class="api-method method-post">POST</span><span class="api-path">/search/v1/assets</span>
+      </div>
+
+      <div class="api-group-label">Governance</div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/overview','Live asset counts across all governance types',[],'overview')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/overview</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/health_score','Governance health score — % of terms with a linked policy',[],'health')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/health_score</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/glossary','All business terms with lifecycle, domain, and CDE flag',[{name:'q',placeholder:'Search keyword (optional)',default:''}],'glossary')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/glossary</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/policies','All policies and regulations',[],'policies')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/policies</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/dq_rules','DQ rule templates with criticality, dimension, and automation flag',[],'dq')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/dq_rules</span>
+      </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/ai_assets','AI Systems and AI Models',[],'ai')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/ai_assets</span>
+      </div>
+    </div>
+
+    <!-- Main: request + response -->
+    <div class="api-main" id="api-main">
+      <div class="api-placeholder">← Select an endpoint to explore</div>
+    </div>
+
+  </div>
+</div>
+
 <!-- ═══════════════════════ STATUS BAR ═════════════════════════ -->
 <div class="status-bar">
   <span><span class="status-dot" id="status-dot"></span><span id="status-text">Checking auth…</span></span>
@@ -780,7 +1337,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
 // ── Tab navigation ────────────────────────────────────────────────────────────
-const tabLoaders = {overview: false, glossary: false, policies: false, dq: false, ai: false};
+const tabLoaders = {overview: false, glossary: false, policies: false, dq: false, ai: false, workflows: true, apiexplorer: true};
 
 function showTab(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -913,6 +1470,47 @@ function loadOverview() {
   }).catch(err => {
     document.getElementById('overview-updated').textContent = 'Error loading data';
     console.error(err);
+  });
+}
+
+// ── Governance Health Score ───────────────────────────────────────────────────
+function scoreColor(pct) {
+  if (pct >= 75) return '#22c55e';
+  if (pct >= 50) return '#f59e0b';
+  return '#ef4444';
+}
+function loadHealthScore() {
+  document.getElementById('health-card').style.display = 'flex';
+  document.getElementById('health-pct').textContent = '…';
+  fetch('/api/health_score').then(r => r.json()).then(data => {
+    const pct     = data.score || 0;
+    const color   = scoreColor(pct);
+    const CIRC    = 232.5;  // 2π × 37
+
+    // Ring animation
+    const fg = document.getElementById('health-ring-fg');
+    fg.style.stroke = color;
+    fg.style.strokeDashoffset = CIRC - (CIRC * pct / 100);
+
+    // Percentage text count-up
+    let cur = 0;
+    const step = Math.max(1, Math.ceil(pct / 40));
+    const id = setInterval(() => {
+      cur = Math.min(cur + step, pct);
+      document.getElementById('health-pct').textContent = cur + '%';
+      if (cur >= pct) clearInterval(id);
+    }, 25);
+
+    // Bar
+    document.getElementById('health-bar-fill').style.width  = pct + '%';
+    document.getElementById('health-bar-fill').style.background = color;
+
+    // Stats
+    document.getElementById('hs-governed').textContent = data.governed;
+    document.getElementById('hs-total').textContent    = data.total;
+    document.getElementById('hs-unlinked').textContent = data.total - data.governed;
+  }).catch(() => {
+    document.getElementById('health-pct').textContent = 'Err';
   });
 }
 
@@ -1071,7 +1669,168 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModalDi
 // ── Auto-load overview on page ready ─────────────────────────────────────────
 window.addEventListener('load', () => {
   setTimeout(loadOverview, 300);
+  setTimeout(loadHealthScore, 500);
 });
+
+// ── Workflows ─────────────────────────────────────────────────────────────────
+const WF_LABELS = {
+  governance_gap: 'Governance Gap Report',
+  cde_risk:       'CDE Risk Assessment',
+  dq_coverage:    'DQ Coverage Check',
+  ai_audit:       'AI Governance Audit',
+};
+
+function runWorkflow(wfName) {
+  const btn  = document.getElementById('wf-btn-' + wfName);
+  const card = document.getElementById('wf-card-' + wfName);
+  const area = document.getElementById('wf-result-area');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+  card.className = 'wf-card running';
+  area.innerHTML = `<div class="wf-result"><div class="wf-result-title"><span class="spinner"></span>Running ${WF_LABELS[wfName]}…</div></div>`;
+  area.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+  const t0 = Date.now();
+  fetch('/api/workflow/' + wfName)
+    .then(r => r.json())
+    .then(data => {
+      const ms = Date.now() - t0;
+      btn.disabled = false;
+      btn.textContent = '▶ Run Again';
+      card.className = data.error ? 'wf-card error' : 'wf-card done';
+      area.innerHTML = renderWorkflowResult(wfName, data, ms);
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = '▶ Run';
+      card.className = 'wf-card error';
+      area.innerHTML = `<div class="wf-result"><div style="color:#f87171">Error: ${esc(String(err))}</div></div>`;
+    });
+}
+
+function renderWorkflowResult(wfName, d, ms) {
+  if (d.error) return `<div class="wf-result"><div style="color:#f87171">Error: ${esc(d.error)}</div></div>`;
+
+  const stepsHtml = (d.steps||[]).map(s =>
+    `<div class="wf-step-row"><span class="wf-step-ok">✓</span> Step ${s.step}: ${esc(s.label)}</div>`
+  ).join('');
+
+  const summaryHtml = Object.entries(d.summary||{}).map(([k,v]) => {
+    const label = k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    const color = (k.includes('risk')||k.includes('ungoverned')||k.includes('missing')) && v > 0 ? '#fca5a5' : '#f1f5f9';
+    return `<div class="wf-summary-stat"><div class="big" style="color:${color}">${v}</div><div class="lbl">${label}</div></div>`;
+  }).join('');
+
+  let tableHtml = '';
+
+  if (wfName === 'governance_gap') {
+    const rows = (d.ungoverned_terms||[]).map(t =>
+      `<tr><td>${esc(t.name)}</td><td>${esc(t.domain)||'—'}</td><td>${lcBadge(t.lifecycle)}</td><td>${t.cde?'<span class="risk-badge risk-high">CDE</span>':'—'}</td></tr>`
+    ).join('') || '<tr><td colspan="4" style="text-align:center;color:#6ee7b7">✓ All terms are governed!</td></tr>';
+    tableHtml = `<table class="wf-table"><thead><tr><th>Term</th><th>Domain</th><th>Lifecycle</th><th>CDE</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  } else if (wfName === 'cde_risk') {
+    const rows = (d.at_risk_cdes||[]).map(c => {
+      const flags = [!c.has_policy?'No Policy':'', !c.has_dq_rule?'No DQ Rule':''].filter(Boolean).join(', ');
+      return `<tr><td>${esc(c.name)}</td><td>${lcBadge(c.lifecycle)}</td><td><span class="risk-badge risk-high">${esc(flags)}</span></td></tr>`;
+    }).join('') || '<tr><td colspan="3" style="text-align:center;color:#6ee7b7">✓ All CDEs are fully governed!</td></tr>';
+    tableHtml = `<table class="wf-table"><thead><tr><th>CDE Name</th><th>Lifecycle</th><th>Risk</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  } else if (wfName === 'dq_coverage') {
+    const rows = (d.terms_without_dq_rule||[]).map(t =>
+      `<tr><td>${esc(t.name)}</td><td>${esc(t.ext_id)}</td></tr>`
+    ).join('') || '<tr><td colspan="2" style="text-align:center;color:#6ee7b7">✓ All terms have DQ coverage!</td></tr>';
+    tableHtml = `<table class="wf-table"><thead><tr><th>Term</th><th>ID</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  } else if (wfName === 'ai_audit') {
+    const rows = (d.at_risk_assets||[]).map(a => {
+      const flags = [!a.has_policy?'No Policy':'', !a.has_dataset?'No Data Set':''].filter(Boolean).join(', ');
+      return `<tr><td>${esc(a.name)}</td><td><span class="badge badge-slate">${esc(a.asset_type)}</span></td><td>${lcBadge(a.lifecycle)}</td><td><span class="risk-badge risk-high">${esc(flags)}</span></td></tr>`;
+    }).join('') || '<tr><td colspan="4" style="text-align:center;color:#6ee7b7">✓ All AI assets are governed!</td></tr>';
+    tableHtml = `<table class="wf-table"><thead><tr><th>Asset</th><th>Type</th><th>Lifecycle</th><th>Risk</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  return `
+    <div class="wf-result">
+      <div class="wf-result-title">
+        ${esc(d.workflow)}
+        <span style="font-size:11px;color:#475569;font-weight:400">completed in ${ms}ms</span>
+      </div>
+      <div class="wf-steps-log">${stepsHtml}</div>
+      <div class="wf-summary-grid">${summaryHtml}</div>
+      ${tableHtml}
+    </div>`;
+}
+
+// ── API Explorer ──────────────────────────────────────────────────────────────
+let _activeEndpointEl = null;
+
+function selectEndpoint(el, method, path, desc, params, key) {
+  if (_activeEndpointEl) _activeEndpointEl.classList.remove('active');
+  el.classList.add('active');
+  _activeEndpointEl = el;
+
+  const isProxy = path.startsWith('/api/');
+  const baseUrl = isProxy ? '' : 'https://dmp-us.informaticacloud.com';
+  const displayUrl = baseUrl + path;
+
+  const paramInputs = params.map(p => `
+    <span class="api-param-label">${p.name}:</span>
+    <input class="api-param-input" id="apip-${p.name}" placeholder="${p.placeholder}" value="${p.default}">
+  `).join('');
+
+  document.getElementById('api-main').innerHTML = `
+    <div class="api-request-bar">
+      <div class="api-desc">${desc}</div>
+      <div class="api-request-url"><span class="api-method method-${method.toLowerCase()}">${method}</span> ${displayUrl}</div>
+      <div class="api-params">
+        ${paramInputs}
+        <button class="btn" onclick="runEndpoint('${method}','${path}','${key}')">▶ Send</button>
+      </div>
+    </div>
+    <div class="api-response" id="api-response-area">
+      <div class="api-placeholder">Press Send to call the API</div>
+    </div>`;
+}
+
+function runEndpoint(method, path, key) {
+  const area = document.getElementById('api-response-area');
+  area.innerHTML = '<div class="api-placeholder"><span class="spinner"></span>Calling API…</div>';
+  const t0 = Date.now();
+
+  let url = path;
+  let opts = {method, headers: {'Content-Type': 'application/json'}};
+
+  if (key === 'search') {
+    const q     = document.getElementById('apip-query')?.value || '*';
+    const atype = document.getElementById('apip-assetType')?.value || '';
+    const filter = atype ? [{"type":"simple","attribute":"core.classType","values":[
+      atype.includes('.') ? atype : 'com.infa.ccgf.models.governance.' + atype
+    ]}] : [];
+    url = '/api/proxy/search?q=' + encodeURIComponent(q) + (atype ? '&assetType=' + encodeURIComponent(atype) : '');
+  } else if (key === 'glossary') {
+    const q = document.getElementById('apip-q')?.value || '';
+    url = '/api/glossary' + (q ? '?q=' + encodeURIComponent(q) : '');
+  }
+
+  fetch(url, opts)
+    .then(r => {
+      const ms = Date.now() - t0;
+      const ok = r.ok;
+      return r.json().then(data => ({data, ms, status: r.status, ok}));
+    })
+    .then(({data, ms, status, ok}) => {
+      const statusBadge = `<span class="api-status ${ok?'status-ok':'status-err'}">${status}</span>`;
+      const pretty = JSON.stringify(data, null, 2);
+      area.innerHTML = `
+        <div class="api-response-meta">${statusBadge}<span class="api-time">${ms}ms</span></div>
+        <pre class="api-json">${esc(pretty)}</pre>`;
+    })
+    .catch(err => {
+      area.innerHTML = `<div class="api-placeholder" style="color:#f87171">Error: ${esc(String(err))}</div>`;
+    });
+}
 </script>
 
 <!-- ═════════════════════════ QUICK-VIEW MODAL ═════════════════════════ -->
@@ -1101,9 +1860,244 @@ window.addEventListener('load', () => {
 </html>"""
 
 
+# ── MCP server ────────────────────────────────────────────────────────────────
+
+def _run_mcp():
+    import asyncio
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+    from mcp.types import Tool, TextContent
+
+    mcp = Server("cdgc-governance")
+
+    @mcp.list_tools()
+    async def list_tools():
+        return [
+            Tool(name="search_assets",
+                 description="Search CDGC assets by keyword and optional asset type. Returns name, description, lifecycle, externalId.",
+                 inputSchema={"type":"object","properties":{
+                     "query":{"type":"string","description":"Search keyword"},
+                     "asset_type":{"type":"string","description":"Optional classType short name: Domain, Subdomain, BusinessTerm, Policy, Regulation, System, DataSet, RuleTemplate, AISystem, AIModel, LegalEntity, BusinessArea, Geography"}
+                 },"required":["query"]}),
+            Tool(name="get_related_assets",
+                 description="Get assets related to a given asset by its externalId. Useful for finding policies linked to a term, DQ rules linked to a term, etc.",
+                 inputSchema={"type":"object","properties":{
+                     "ext_id":{"type":"string","description":"ExternalId of the source asset (e.g. RKFBT-3)"},
+                     "related_type":{"type":"string","description":"ClassType short name to find related assets of (e.g. Policy, RuleTemplate, DataSet)"}
+                 },"required":["ext_id","related_type"]}),
+            Tool(name="get_governance_health",
+                 description="Get the governance health score: percentage of Business Terms with a linked Policy. Also returns lists of governed and ungoverned terms.",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+            Tool(name="find_ungoverned_terms",
+                 description="List all Business Terms that do NOT have a linked Policy.",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+            Tool(name="find_cde_assets",
+                 description="List all Critical Data Elements (Business Terms with criticalDataElement=true) and their governance status.",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+            Tool(name="get_asset_counts",
+                 description="Get a count of assets by type across the entire CDGC org.",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+            Tool(name="get_ai_assets",
+                 description="List all AI Systems and AI Models with their type, lifecycle, and description.",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+            Tool(name="get_domain_coverage",
+                 description="For each Domain, show how many Business Terms exist and what % are governed (have a linked Policy).",
+                 inputSchema={"type":"object","properties":{},"required":[]}),
+        ]
+
+    CLASSTYPE_MAP = {
+        "Domain":       "com.infa.ccgf.models.governance.Domain",
+        "Subdomain":    "com.infa.ccgf.models.governance.Subdomain",
+        "BusinessTerm": "com.infa.ccgf.models.governance.BusinessTerm",
+        "Policy":       "com.infa.ccgf.models.governance.Policy",
+        "Regulation":   "com.infa.ccgf.models.governance.Regulation",
+        "System":       "com.infa.ccgf.models.governance.System",
+        "DataSet":      "com.infa.ccgf.models.governance.DataSet",
+        "RuleTemplate": "com.infa.ccgf.models.governance.RuleTemplate",
+        "AISystem":     "com.infa.ccgf.models.governance.AISystem",
+        "AIModel":      "com.infa.ccgf.models.governance.AIModel",
+        "LegalEntity":  "com.infa.ccgf.models.governance.LegalEntity",
+        "BusinessArea": "com.infa.ccgf.models.governance.BusinessArea",
+        "Geography":    "com.infa.ccgf.models.governance.Geography",
+    }
+
+    def _fmt_hits(hits):
+        rows = []
+        for h in hits:
+            s = h.get("summary") or {}
+            rows.append({
+                "name":        s.get("core.name", "?"),
+                "ext_id":      h.get("core.externalId", ""),
+                "lifecycle":   s.get("core.lifecycle", ""),
+                "description": s.get("core.description", ""),
+            })
+        return rows
+
+    def _related(ext_id, class_type):
+        hs_h, _ = _headers()
+        resp = requests.post(
+            f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
+            headers=hs_h,
+            json={"from": 0, "size": 100,
+                  "filterSpec": [{"type": "simple", "attribute": "core.classType",
+                                  "values": [class_type]}],
+                  "relatedAsset": {"externalId": ext_id, "scheme": "external"}},
+            timeout=20)
+        return resp.json().get("hits", []) if resp.status_code == 200 else []
+
+    def _health_data():
+        bt_hits = _search("com.infa.ccgf.models.governance.BusinessTerm")
+        hs_h, _ = _headers()
+        def check(h):
+            s = h.get("summary") or {}
+            ext_id = h.get("core.externalId", "")
+            related = _related(ext_id, "com.infa.ccgf.models.governance.Policy")
+            return {
+                "name":       s.get("core.name", "?"),
+                "ext_id":     ext_id,
+                "lifecycle":  s.get("core.lifecycle", ""),
+                "cde":        str(s.get("governance.criticalDataElement","false")).lower()=="true",
+                "has_policy": bool(related),
+            }
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            results = list(ex.map(check, bt_hits))
+        governed = sum(1 for r in results if r["has_policy"])
+        return results, governed, len(results)
+
+    @mcp.call_tool()
+    async def call_tool(name, arguments):
+        import json as _json
+
+        if name == "get_asset_counts":
+            prefix = _auth.get("prefix") or _auto_detect_prefix() or ""
+            rows = []
+            for label, ct in ASSET_TYPES:
+                count = len(_search(ct))
+                if count == 0 and prefix:
+                    for pfx_code, ai_label in AI_PREFIXES:
+                        if ai_label == label:
+                            kq = "AI+System" if pfx_code == "AIS" else "AI+Model"
+                            hits, _ = _search_page(class_type=None, from_=0, size=100, knowledge_query=kq)
+                            count = sum(1 for h in hits if h.get("core.externalId","").startswith(f"{prefix}{pfx_code}"))
+                rows.append(f"{label}: {count}")
+            return [TextContent(type="text", text="\n".join(rows))]
+
+        if name == "search_assets":
+            q    = arguments.get("query", "*")
+            atype = arguments.get("asset_type", "")
+            ct   = CLASSTYPE_MAP.get(atype) if atype else None
+            hits = _search(ct, knowledge_query=urllib.parse.quote_plus(q)) if ct else []
+            if not ct:
+                # search all types
+                all_hits = []
+                for _, class_type in ASSET_TYPES:
+                    all_hits.extend(_search(class_type, knowledge_query=urllib.parse.quote_plus(q)))
+                hits = all_hits[:50]
+            rows = _fmt_hits(hits)
+            return [TextContent(type="text", text=_json.dumps(rows, indent=2))]
+
+        if name == "get_related_assets":
+            ext_id = arguments["ext_id"]
+            rtype  = arguments["related_type"]
+            ct     = CLASSTYPE_MAP.get(rtype, rtype)
+            hits   = _related(ext_id, ct)
+            return [TextContent(type="text", text=_json.dumps(_fmt_hits(hits), indent=2))]
+
+        if name == "get_governance_health":
+            terms, governed, total = _health_data()
+            score = round(governed / total * 100) if total else 0
+            summary = f"Governance Health Score: {score}%\nGoverned: {governed}/{total} Business Terms have a linked Policy"
+            return [TextContent(type="text", text=summary)]
+
+        if name == "find_ungoverned_terms":
+            terms, _, _ = _health_data()
+            ungoverned = [t for t in terms if not t["has_policy"]]
+            if not ungoverned:
+                return [TextContent(type="text", text="All Business Terms have a linked Policy.")]
+            lines = [f"- {t['name']} ({t['ext_id']}) [{t['lifecycle']}]{'  ⭐ CDE' if t['cde'] else ''}" for t in ungoverned]
+            return [TextContent(type="text", text=f"{len(ungoverned)} ungoverned terms:\n" + "\n".join(lines))]
+
+        if name == "find_cde_assets":
+            terms, _, _ = _health_data()
+            cdes = [t for t in terms if t["cde"]]
+            if not cdes:
+                return [TextContent(type="text", text="No Critical Data Elements found.")]
+            lines = [f"- {t['name']} ({t['ext_id']}) — {'✓ governed' if t['has_policy'] else '✗ ungoverned'} [{t['lifecycle']}]" for t in cdes]
+            gov_count = sum(1 for t in cdes if t["has_policy"])
+            return [TextContent(type="text", text=f"{len(cdes)} CDEs ({gov_count} governed):\n" + "\n".join(lines))]
+
+        if name == "get_ai_assets":
+            prefix = _auth.get("prefix") or _auto_detect_prefix() or ""
+            results = []
+            for pfx_code, label, kq in [("AIS","AI System","AI+System"),("AIM","AI Model","AI+Model")]:
+                hits, _ = _search_page(class_type=None, from_=0, size=100, knowledge_query=kq)
+                for h in hits:
+                    s = h.get("summary") or {}
+                    ext_id = h.get("core.externalId","")
+                    if prefix and not ext_id.startswith(f"{prefix}{pfx_code}"):
+                        continue
+                    results.append(f"[{label}] {s.get('core.name','?')} ({ext_id}) — {s.get('core.lifecycle','')} — {s.get('core.description','')[:80]}")
+            return [TextContent(type="text", text="\n".join(results) if results else "No AI assets found.")]
+
+        if name == "get_domain_coverage":
+            domains  = _search("com.infa.ccgf.models.governance.Domain")
+            bt_hits  = _search("com.infa.ccgf.models.governance.BusinessTerm")
+            lines = []
+            for dom in domains:
+                dom_id   = dom.get("core.externalId","")
+                dom_name = (dom.get("summary") or {}).get("core.name","?")
+                dom_bts  = _related(dom_id, "com.infa.ccgf.models.governance.BusinessTerm")
+                governed = 0
+                for bt in dom_bts:
+                    bt_id = bt.get("core.externalId","")
+                    pol   = _related(bt_id, "com.infa.ccgf.models.governance.Policy")
+                    if pol:
+                        governed += 1
+                total = len(dom_bts)
+                pct = round(governed/total*100) if total else 0
+                lines.append(f"{dom_name}: {pct}% governed ({governed}/{total} terms)")
+            return [TextContent(type="text", text="\n".join(lines) if lines else "No domains found.")]
+
+        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+
+    async def main():
+        async with stdio_server() as (r, w):
+            await mcp.run(r, w, mcp.create_initialization_options())
+
+    asyncio.run(main())
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys
+
+    # ── MCP mode ──────────────────────────────────────────────────────────────
+    if "--mcp" in sys.argv:
+        import os, traceback as _tb
+        username = os.environ.get("CDGC_USERNAME") or input("IDMC Username: ").strip()
+        password = os.environ.get("CDGC_PASSWORD") or getpass.getpass("IDMC Password: ")
+        try:
+            do_login(username, password)
+            print("CDGC MCP: auth OK", file=sys.stderr)
+            prefix = _auto_detect_prefix() or ""
+            if prefix:
+                with _auth_lock:
+                    _auth["prefix"] = prefix
+                print(f"CDGC MCP: prefix={prefix}", file=sys.stderr)
+        except Exception as e:
+            print(f"CDGC MCP: auth failed: {e}", file=sys.stderr)
+            _tb.print_exc(file=sys.stderr)
+            raise SystemExit(1)
+        try:
+            _run_mcp()
+        except Exception as e:
+            print(f"CDGC MCP: runtime error: {e}", file=sys.stderr)
+            _tb.print_exc(file=sys.stderr)
+            raise SystemExit(1)
+        raise SystemExit(0)
+
+    # ── Dashboard mode ────────────────────────────────────────────────────────
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("  CDGC Live Dashboard")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
