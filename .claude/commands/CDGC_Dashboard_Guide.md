@@ -167,74 +167,6 @@ The proxy route (`/api/proxy/search`) on the Flask server handles authentication
 
 ---
 
-## MCP server mode
-
-The same Python file can run as an MCP (Model Context Protocol) server, which lets Claude Code answer natural language questions about your live CDGC org.
-
-### What MCP adds
-
-When the MCP server is running, you can type questions directly in Claude Code:
-
-- "What is our governance health score?"
-- "Which Business Terms have no owner?"
-- "Show me all Critical Data Elements with no DQ rule linked"
-- "How many AI Models are in production lifecycle?"
-
-Claude calls the MCP tools to fetch live data and synthesizes the answer.
-
-### MCP tools available
-
-| Tool | What it does |
-|------|-------------|
-| `get_governance_health` | Calculates and returns the full health scorecard |
-| `get_asset_counts` | Returns count per asset type |
-| `search_assets` | Search by class type, name, or keyword |
-| `get_domain_coverage` | Coverage breakdown by domain |
-| `find_cde_assets` | Lists all CDE-flagged terms |
-| `find_ungoverned_terms` | Finds terms missing key governance fields |
-| `get_ai_assets` | Lists AI Systems and Models with governance status |
-| `get_related_assets` | Finds assets related to a given asset by ID |
-
-### Registering the MCP server
-
-Run this once in Terminal (replace the values with your actual credentials):
-
-```bash
-claude mcp add cdgc-governance \
-  -s user \
-  -e CDGC_USERNAME="your.email@company.com" \
-  -e CDGC_PASSWORD="yourpassword" \
-  -- python3 /Users/yourname/Informatica-CDGC-kit/.claude/commands/cdgc_dashboard.py --mcp
-```
-
-Then restart Claude Code and type `/mcp` to confirm the server shows **connected** with 8 tools.
-
-### Known issue — SSL certificate conflict
-
-If you run Claude Code inside a Salesforce-managed environment, a custom CA bundle (`NODE_EXTRA_CA_CERTS`) may be injected into the process environment. The MCP subprocess inherits this and Python's `requests` library rejects Informatica's endpoints because they aren't in the Salesforce CA bundle.
-
-**Symptom:** MCP server connects (shows 8 tools) but every tool call returns a 401 or SSL error.
-
-**Workaround:** Unset the CA variables at MCP registration time:
-
-```bash
-claude mcp remove cdgc-governance -s user
-
-claude mcp add cdgc-governance \
-  -s user \
-  -e CDGC_USERNAME="your.email@company.com" \
-  -e CDGC_PASSWORD="yourpassword" \
-  -e REQUESTS_CA_BUNDLE="" \
-  -e CURL_CA_BUNDLE="" \
-  -- python3 /Users/yourname/Informatica-CDGC-kit/.claude/commands/cdgc_dashboard.py --mcp
-```
-
-This clears the CA override for the MCP subprocess while leaving the rest of your environment intact.
-
-**Note:** The standalone dashboard (`python3 cdgc_dashboard.py`) is unaffected by this issue because it runs in your terminal environment, not as a Claude Code subprocess.
-
----
-
 ## Troubleshooting
 
 **Dashboard shows blank fields (Criticality, Dimension, Lifecycle, etc.)**
@@ -252,5 +184,10 @@ Run `pip install flask requests` and try again.
 **Dashboard loads but shows no data**
 Your IDMC account may not have CDGC enabled, or you may be pointing at an org with no assets. Run `cdgc_discover_classtypes.py` to confirm the org has assets.
 
-**MCP server shows "failed" in `/mcp`**
-Two possible causes: (1) conflicting registrations in local vs user scope — run `claude /doctor` and remove the duplicate; (2) credentials are wrong — re-register with correct values.
+---
+
+## Natural language queries (optional)
+
+If you want to ask questions about your CDGC org directly in Claude Code ("What is our governance health score?", "Which terms have no owner?"), that is handled by the MCP server — a separate, optional feature that does not affect the dashboard.
+
+See **[CDGC_MCP_Guide.md](CDGC_MCP_Guide.md)** for setup instructions.
