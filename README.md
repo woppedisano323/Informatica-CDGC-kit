@@ -89,7 +89,6 @@ All skills live in `.claude/commands/` and are **auto-loaded** when you open thi
 | [CDGC_Demo_Setup_Guide.md](.claude/commands/CDGC_Demo_Setup_Guide.md) | Deep dive on `/cdgc-setup` — verticals, asset counts, import order, API import |
 | [CDGC_Client_Setup_Guide.md](.claude/commands/CDGC_Client_Setup_Guide.md) | Deep dive on `/cdgc-client-setup` — workflow paths, resume flow, document tips, troubleshooting |
 | [CDGC_Dashboard_Guide.md](.claude/commands/CDGC_Dashboard_Guide.md) | Running the live dashboard — tabs, workflows, API explorer |
-| [CDGC_MCP_Guide.md](.claude/commands/CDGC_MCP_Guide.md) | Optional: natural language queries via Claude Code (MCP setup) |
 
 ---
 

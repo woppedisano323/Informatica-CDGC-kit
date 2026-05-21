@@ -184,10 +184,3 @@ Run `pip install flask requests` and try again.
 **Dashboard loads but shows no data**
 Your IDMC account may not have CDGC enabled, or you may be pointing at an org with no assets. Run `cdgc_discover_classtypes.py` to confirm the org has assets.
 
----
-
-## Natural language queries (optional)
-
-If you want to ask questions about your CDGC org directly in Claude Code ("What is our governance health score?", "Which terms have no owner?"), that is handled by the MCP server — a separate, optional feature that does not affect the dashboard.
-
-See **[CDGC_MCP_Guide.md](CDGC_MCP_Guide.md)** for setup instructions.
