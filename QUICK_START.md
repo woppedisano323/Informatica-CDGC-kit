@@ -4,15 +4,23 @@ This guide is for people who have never used Terminal or Python before. Follow e
 
 ---
 
-## Step 1 — Open Terminal
+## Step 1 — Open a Terminal
 
-Terminal is an app on your Mac that lets you type commands directly to your computer.
+A terminal lets you type commands directly to your computer.
 
-1. Press **Cmd + Space** on your keyboard
+**Mac:**
+1. Press **Cmd + Space**
 2. Type `Terminal`
 3. Press **Enter**
 
-A window opens with a blinking cursor. This is your Terminal. You type commands here and press Enter to run them.
+**Windows:**
+1. Press **Windows key + R**
+2. Type `cmd` and press **Enter** (or search for **PowerShell** in the Start menu for a more modern option)
+
+**Linux:**
+Press **Ctrl + Alt + T** or search for Terminal in your applications.
+
+A window opens with a blinking cursor. This is your terminal. You type commands here and press Enter to run them.
 
 ---
 
@@ -86,7 +94,7 @@ Claude will guide you through the rest with questions.
 
 The dashboard opens a live browser view of your CDGC org.
 
-1. Open Terminal (or open a new Terminal tab with **Cmd + T**)
+1. Open a new terminal window (Mac: **Cmd + T** for a new tab; Windows: open a new Command Prompt or PowerShell window)
 2. Type this and press Enter:
 ```
 cd ~/Informatica-CDGC-kit
@@ -149,7 +157,7 @@ Make sure you ran `claude .` from inside the `Informatica-CDGC-kit` folder, not 
 
 | Term | What it means |
 |------|--------------|
-| Terminal | The command-line app on your Mac |
+| Terminal | The command-line app on your computer (Terminal on Mac/Linux, Command Prompt or PowerShell on Windows) |
 | `cd` | Change directory — moves you into a folder |
 | `python3` | Runs a Python script |
 | `pip install` | Installs a Python library |
