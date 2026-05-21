@@ -42,6 +42,8 @@ The dashboard connects live to your CDGC org via the IDMC REST API. It does not 
 
 A governance health scorecard for your entire org.
 
+**What you'll see:** The page opens with a large circular score dial in the center (0–100) labelled "Governance Health Score". Below it, three percentage gauges sit side by side: CDE Coverage, Policy Coverage, and DQ Coverage. Across the top is a row of asset count cards — one card per asset type (Domains, Business Terms, Policies, Regulations, DQ Rule Templates, AI Systems, AI Models, etc.), each showing the live count from your org.
+
 | Section | What it shows |
 |---------|--------------|
 | Asset counts | Total count per asset type (Business Terms, Policies, DQ Rules, etc.) |
@@ -57,6 +59,8 @@ The health score uses a weighted formula. A brand-new demo org scores around 20�
 ### Tab 2 — Business Glossary
 
 All Business Terms in the org, with governance metadata.
+
+**What you'll see:** A filterable table with one row per Business Term. Columns are Name, Domain, Lifecycle, CDE (a green badge if flagged), and Definition (truncated). A search box above the table lets you filter by name or keyword. Clicking any row expands a detail panel on the right side of the screen showing all fields for that term, including its full description and any linked assets.
 
 | Column | Source |
 |--------|--------|
@@ -76,6 +80,8 @@ Click any row to see the full asset detail panel on the right.
 
 All Policies and Regulations in one view, with type and lifecycle.
 
+**What you'll see:** A single table combining both asset types. A "Type" badge on each row distinguishes Policy (blue) from Regulation (purple). Columns include Name, Type, Lifecycle, and Description. Like the glossary, clicking a row opens a detail panel on the right.
+
 | Column | Source |
 |--------|--------|
 | Name | `core.name` |
@@ -88,6 +94,8 @@ All Policies and Regulations in one view, with type and lifecycle.
 ### Tab 4 — DQ Rules
 
 All DQ Rule Templates, with quality metadata.
+
+**What you'll see:** A table of rule templates with richer metadata than any other tab. The Criticality column shows colored badges (red = High, yellow = Medium, grey = Low). The Dimension column shows the quality dimension (Completeness, Accuracy, Uniqueness, etc.). The Automated column shows a checkmark or dash. This is the most diagnostic tab — it lets you quickly see which rules are manual vs automated and which are high criticality.
 
 | Column | Source |
 |--------|--------|
@@ -105,6 +113,8 @@ All DQ Rule Templates, with quality metadata.
 
 All AI Systems and AI Models.
 
+**What you'll see:** A table combining AI Systems and AI Models in one view. A Type badge distinguishes them. This tab is especially useful in demos to show that CDGC tracks not just data assets but the AI systems that consume or produce them — making it relevant for AI governance conversations. A fully populated demo org will show a hierarchy of systems with their associated models beneath them.
+
 | Column | Source |
 |--------|--------|
 | Name | `core.name` |
@@ -117,6 +127,8 @@ All AI Systems and AI Models.
 ### Tab 6 — Workflows
 
 Pre-built multi-step API orchestration workflows. Each workflow chains several CDGC API calls to produce a structured analysis report.
+
+**What you'll see:** Four workflow cards, each with a title, a one-line description, and a blue **Run** button. When you click Run, a progress indicator appears while the workflow executes (typically 5–15 seconds). The result renders below the card as a structured table with a written summary paragraph at the top — for example, the Governance Gap Analysis lists each domain with a count of ungoverned terms and calls out the highest-priority gaps. This tab is designed to be shown in demos as a "what would I do with this data?" moment — it turns raw asset counts into actionable analysis.
 
 | Workflow | What it does |
 |----------|-------------|
@@ -132,6 +144,8 @@ Click **Run** on any workflow. Results appear in the panel below with a structur
 ### Tab 7 — API Explorer
 
 A live browser for the CDGC REST API. Browse pre-configured endpoint groups, select an endpoint, optionally edit the request body, and click **Try It** to see the raw API response.
+
+**What you'll see:** A two-panel layout. The left panel lists endpoint groups (Search, Business Terms, Policies, etc.) — clicking a group expands it to show individual endpoints. Selecting an endpoint populates the right panel with the endpoint URL, HTTP method, and an editable JSON request body. A **Try It** button sends the request through the dashboard's proxy (so your session is used automatically). The raw JSON response appears below in a scrollable, syntax-highlighted code block. This tab is useful in demos to show the underlying API that powers CDGC — and to let a technical audience see exactly what data structure they'd work with in an integration.
 
 **Endpoint groups available:**
 
