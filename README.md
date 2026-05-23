@@ -19,6 +19,16 @@ A demo and deployment accelerator for Informatica Cloud Data Governance & Catalo
 
 ---
 
+## Outputs at a glance
+
+| Artifact | Name | When to use |
+|----------|------|-------------|
+| `CDGC_<Company>_Preview.html` | Import Preview | Pre-import — browse all 14 files in a searchable viewer |
+| `CDGC_Review_Workbook_<PREFIX>_v1.html` | Review Workbook | Pre-import — action items, conflict flags, per-file review |
+| `cdgc_dashboard.py` (Flask, localhost:8080) | CDGC Live Dashboard | Post-import — real-time connection to your live CDGC org |
+
+---
+
 ## Quick Start — New to Terminal?
 
 See **[QUICK_START.md](QUICK_START.md)** for a step-by-step guide written for users who have never used Terminal or Python before.
