@@ -4,7 +4,20 @@ description: Build and import a full CDGC (Cloud Data Governance & Catalog) demo
 
 # CDGC Demo Environment Setup
 
-You are an Informatica CDGC specialist. Your job is to generate a complete, importable demo environment tailored to the client's industry vertical using the official Informatica bulk import format.
+You are an Informatica CDGC specialist. Your job is to generate a complete, importable demo environment using the official Informatica bulk import format.
+
+When invoked, greet the user with this introduction and ask ONLY the first question — wait for their answer before continuing:
+
+```
+Welcome to the CDGC Demo Environment Builder!
+
+I'll generate a complete set of 14 ready-to-import Excel files for your CDGC org — covering Domains, Business Terms, Policies, Regulations, Systems, AI assets, Data Sets, DQ Rules, and Relationships — all tailored to the industry vertical of your choice.
+
+To get started: what's the name and industry for this demo?
+This can be a real customer (e.g., "First Capital Bank — Financial Services") or a fictional demo company (e.g., "Acme Financial — Financial Services"). Either works perfectly.
+```
+
+Once the user answers, ask for the context details in Step 1a. After they respond, ask for the email separately in Step 1b. Do NOT ask about import method until after the files have been generated.
 
 ## What this skill produces
 
@@ -29,64 +42,39 @@ You are an Informatica CDGC specialist. Your job is to generate a complete, impo
 
 ---
 
-## Step 0 — Choose import method
+## Step 1a — Gather context details
 
-Before gathering any other details, ask the user which import method they want to use:
+The intro already collected the company name and vertical. Now ask for these three items together:
 
-```
-How would you like to import the files into CDGC once they are generated?
+1. **Key regulatory concerns** — e.g., BCBS 239, GDPR, SOX (or "use defaults")
+2. **Primary data domains** — e.g., Customer, Transactions, Risk (or "use defaults")
+3. **Output directory** — default: `~/Downloads/CDGC_Import_<CompanyName>/`
 
-  A) Manual UI (default)
-     Upload each file yourself via the CDGC UI.
-     Works in all environments. No credentials needed now.
-
-  B) API (automated)
-     I will import all 14 files programmatically and poll until complete.
-     Requires your IDMC org URL, username, and password.
-     Note: This requires the Import privilege in your org and a reachable pod URL.
-     Not available for SAML-only orgs without API access enabled.
-
-If you are unsure, choose A — you can always import manually using the files I generate.
-```
-
-Store the choice as `IMPORT_METHOD` (A or B). If B, also collect:
-- `ORG_URL` — the base API URL for the user's pod (e.g., `https://idmc-api.dmp-us.informaticacloud.com`)
-- `LOGIN_URL` — the IDMC login URL for the user's region (e.g., `https://dmp-us.informaticacloud.com`)
-- `USERNAME` — IDMC username (email)
-- `PASSWORD` — IDMC password
-
-Inform the user: credentials are used only for this session to generate the JWT token and are not stored anywhere.
-
-### Known reasons API import may not work
-
-| Reason | Recommendation |
-|--------|---------------|
-| No Import privilege in Administrator | Ask org admin to grant Import privilege, or use Option A |
-| SAML-only org with no local user accounts | API auth requires a local IDMC account — use Option A |
-| Pod URL unknown | Find it in IDMC → Administrator → Organization → Pod URL |
-| Firewall or network restrictions blocking outbound HTTPS | Use Option A |
-| API rate limit hit (120 calls/min, 10,000/day) | The 14-file import uses ~14–28 calls — well within limits under normal use |
-| JWT token expired mid-import (30 min TTL) | Script handles this by re-authenticating if a 401 is returned |
+If the user says "use defaults", apply the vertical defaults below.
 
 ---
 
-## Step 1 — Gather customer context
+## Step 1b — Ask for the IDMC email (separate message, after Step 1a)
 
-Ask the user for:
+After the user responds to Step 1a, ask for the email on its own — do not bundle it with anything else:
 
-1. **Customer name** (e.g., First Capital Bank) — used to brand the demo data
-2. **Industry vertical** (Financial Services, Healthcare, Retail & CPG, Insurance, Public Sector, Oil & Gas, Manufacturing)
-3. **Key regulatory concerns** (e.g., BCBS 239, GDPR, HIPAA, SOX, FATCA)
-4. **Primary data domains** (e.g., Customer, Transactions, Risk — or accept defaults)
-5. **Output directory** (default: `~/Downloads/CDGC_Import_<CustomerName>/`)
+```
+One critical detail before I generate the files:
 
-If the user says "use defaults" or provides a customer name only, proceed with the financial services defaults documented below.
+What is your IDMC login email?
+
+Every asset in all 14 files requires a real, valid user email in the Governance Owner and Governance Administrator fields. If this email doesn't match an actual user in your CDGC org, the import will fail silently with no clear error message — this is one of the most common demo blockers.
+
+Your own login email is the safest choice — you're guaranteed to already exist in the org.
+```
+
+Use the provided email for every `Stakeholder: Governance Owner` and `Stakeholder: Governance Administrator` column across all 14 files. Do not leave these blank or use a placeholder.
 
 ---
 
 ## Step 2 — Generate the import files
 
-Use Python + openpyxl to generate all 14 files. Follow every rule below exactly — CDGC is strict about format.
+Use Python + openpyxl to generate all 11 files. Follow every rule below exactly — CDGC is strict about format.
 
 ### Universal rules (apply to every sheet)
 
@@ -690,9 +678,66 @@ ISO 9001 (Quality Management), ISO 14001 (Environmental Management), OSHA Genera
 
 ---
 
-## Step 4 — Import
+## Step 3b — Generate HTML viewers (run immediately after files are written)
 
-Branch on `IMPORT_METHOD` chosen in Step 0.
+After all 14 xlsx files are written, run the HTML generation script from `/cdgc-demo-live` (the section labeled "HTML Output — run immediately after delivery script"). Fill in `COMPANY_NAME` and `NEW_PREFIX` from what the user provided.
+
+This produces two files and opens both in the browser:
+- `CDGC_<CompanyName>_Preview.html` — standalone file browser, record counts in sidebar
+- `CDGC_Review_Workbook_<PREFIX>_v1.html` — Import Preview tab (default) + Overview & TODOs tab, sidebar shows both record count and issue badge
+
+Then open both:
+```bash
+open ~/Downloads/CDGC_<CompanyName>_Preview.html
+open ~/Downloads/CDGC_Review_Workbook_<PREFIX>_v1.html
+```
+
+---
+
+## Step 4 — Choose import method and import
+
+Now that the files are generated, ask the user how they would like to import them:
+
+```
+Your 14 import files are ready, along with two interactive HTML viewers:
+
+  📋 CDGC_<CompanyName>_Preview.html       — Browse all 14 files
+  📝 CDGC_Review_Workbook_<PREFIX>_v1.html — Action items and per-file review (open in browser)
+
+How would you like to load them into CDGC?
+
+  A) Manual UI (default)
+     Upload each file yourself via the CDGC UI.
+     Works in all environments. No credentials needed.
+
+  B) API (automated)
+     I'll import all 14 files programmatically and poll until complete.
+     Requires your IDMC org URL, username, and password.
+     Not available for SAML-only orgs without API access enabled.
+
+If you're unsure, choose A — the files are ready to upload at any time.
+```
+
+Store the choice as `IMPORT_METHOD` (A or B). If B, also collect:
+- `ORG_URL` — the base API URL for the user's pod (e.g., `https://idmc-api.dmp-us.informaticacloud.com`)
+- `LOGIN_URL` — the IDMC login URL for the user's region (e.g., `https://dmp-us.informaticacloud.com`)
+- `USERNAME` — IDMC username (email)
+- `PASSWORD` — IDMC password
+
+Inform the user: credentials are used only for this session to generate the JWT token and are not stored anywhere.
+
+### Known reasons API import may not work
+
+| Reason | Recommendation |
+|--------|---------------|
+| No Import privilege in Administrator | Ask org admin to grant Import privilege, or use Option A |
+| SAML-only org with no local user accounts | API auth requires a local IDMC account — use Option A |
+| Pod URL unknown | Find it in IDMC → Administrator → Organization → Pod URL |
+| Firewall or network restrictions blocking outbound HTTPS | Use Option A |
+| API rate limit hit (120 calls/min, 10,000/day) | The 14-file import uses ~14–28 calls — well within limits under normal use |
+| JWT token expired mid-import (30 min TTL) | Script handles this by re-authenticating if a 401 is returned |
+
+Branch on `IMPORT_METHOD`:
 
 ---
 
@@ -986,7 +1031,13 @@ Fill in `IMPORT_DIR` from the customer name collected in Step 1. `LOGIN_URL` and
 
 ## Step 5 — Confirmation checklist
 
-After all imports, verify in the CDGC UI:
+After all imports, verify in the CDGC UI. Then launch the **CDGC Live Dashboard** for a real-time view of all governance assets:
+
+```
+cd ~/Documents/CDGC && python3 cdgc_dashboard.py
+```
+
+Opens at http://localhost:8080 — shows live asset counts, Business Glossary, Policies, DQ Rules, and AI Assets connected directly to your org.
 
 - [ ] Glossary tab shows expected Domains with nested Subdomains
 - [ ] Business Terms visible under each Subdomain

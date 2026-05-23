@@ -1,14 +1,10 @@
 ---
-description: Build a complete CDGC import package from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries, or Excel schemas. Produces a color-coded Review Workbook for approval, then generates all 14 import files that are easily imported directly into the Informatica CDGC product. Supports CSV, Excel (multi-tab), PDF, Word, and plain text. Detects cross-document conflicts. Three fallback modes: TODO markers (A), vertical defaults (B), or interactive gap interview (C). Resume flow: load an edited workbook from a prior session or client review with `/cdgc-client-setup resume <path>`.
+description: Build a complete CDGC import package from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries, or Excel schemas. Produces a color-coded Review Workbook for approval, then generates all 14 import files that are easily imported directly into the Informatica CDGC product. Supports CSV, Excel (multi-tab), PDF, Word, and plain text. Detects cross-document conflicts. Three fallback modes: TODO markers (A), vertical defaults (B), or interactive gap interview (C).
 ---
 
 # CDGC Client-Driven Setup
 
 This skill builds a complete, client-specific CDGC import package from documents the client already has. Feed it any combination of data dictionaries, policy PDFs, org charts, glossaries, or Excel schemas — it parses them, extracts governance assets with confidence scoring, and produces a color-coded Review Workbook for approval before generating the 14 import files that are easily imported directly into the Informatica CDGC product. Supports CSV, Excel (multi-tab), PDF, Word, and plain text. Detects and flags cross-document conflicts. Three fallback modes handle gaps: TODO markers (A), vertical defaults (B), or an interactive gap interview (C).
-
-**Two entry points:**
-- `/cdgc-client-setup` — full flow: parse documents → Review Workbook → generate import files
-- `/cdgc-client-setup resume <path>` — pick up from an edited Review Workbook (client returned it, or a prior session generated it)
 
 ---
 
@@ -31,51 +27,12 @@ This skill builds a complete, client-specific CDGC import package from documents
 - **Python 3.8+** installed (`python3 --version` to check)
 - Required Python packages (run once per machine):
   ```bash
-  pip install openpyxl pdfplumber python-docx requests
+  pip install openpyxl pdfplumber python-docx
   ```
-  (`requests` is needed for API import — asked at approval or resume time)
-
   Or use the included `install_cdgc_deps.sh`:
   ```bash
   ~/.claude/commands/install_cdgc_deps.sh
   ```
-
----
-
-## Overview of the workflow
-
-This skill supports two distinct usage patterns — demos and real engagements — that share the same steps but differ in how the review cycle works.
-
-### Single-session flow (demo / proof of concept)
-```
-Step 0 — Collect documents + client name + project name
-Step 1 — Parse documents and extract candidates
-Step 2 — Generate the Review Workbook
-Step 3 — Review inline → approve → choose import method (UI or API)
-Step 4 — Generate the 14 import files
-Step 5 — Import into CDGC
-```
-
-### Multi-session flow (real client engagement)
-```
-Session 1 (practitioner has source documents):
-  Step 0 — Collect documents + client name + project name
-  Step 1 — Parse documents
-  Step 2 — Generate the Review Workbook
-  Step 3 — Hand off workbook for client review → provide handoff guidance
-
-  [Client edits workbook offline — fills in owners, corrects terms,
-   resolves conflicts, clears TODO cells — may take days or weeks]
-
-Session 2 (workbook returned — any practitioner, any machine):
-  /cdgc-client-setup resume <path-to-edited-workbook>
-  → Validate workbook, report TODOs + broken parent links
-  → Choose import method (UI or API)
-  Step 4 — Generate the 14 import files from the edited workbook
-  Step 5 — Import into CDGC
-```
-
-All output files and folders use the naming convention `<ClientName>-<ProjectName>` (e.g., `AcmeHealth-DataGovernanceQ3`). The folder name is embedded in the workbook filename and recovered automatically on resume.
 
 ---
 
@@ -91,13 +48,13 @@ All output files and folders use the naming convention `<ClientName>-<ProjectNam
 5. Approve and generate the 14 files — "in a real engagement, these go straight into your CDGC environment"
 
 **What to emphasize:**
-- The Review Workbook is a collaboration artifact — the client edits it and returns it; it is not a black box
-- Conflict detection surfaces inconsistencies across teams before they become import errors
+- The Review Workbook is a collaboration artifact — it's something the client can edit and return, not a black box
+- Conflict detection shows you're protecting them from inconsistency across teams
 - HIGH confidence rows mean zero manual work — they're ready to import
 
 **What to skip:**
 - Don't walk through every column spec — too technical for a first call
-- Don't demo the gap interview (Option C) unless the audience is already technical — it slows the flow
+- Don't demo the gap interview (Option C) unless the prospect is already technical — it slows the flow
 
 **Validated demo document set (Healthcare / HHS):**
 Three authentic, publicly available PDFs from the same organizational ecosystem:
@@ -109,54 +66,24 @@ These three documents produce 2 natural conflicts (USCDI clinical vocabulary vs 
 
 ---
 
-## Resume entry point — starting from an edited workbook
+## Overview of the workflow
 
-If the Review Workbook was generated in a prior session (or handed back by the client after review), skip document parsing entirely and load directly from the workbook.
+```
+Step 0 — Collect documents + client name + project name
+Step 1 — Parse documents and extract candidates
+Step 2 — Generate the Review Workbook (00_Review.xlsx)
+Step 3 — Present summary to user, ask: approve / edit / go offline
+Step 4 — On approval, generate the 14 import files
+Step 5 — Provide import instructions
+```
 
-**Trigger:** the practitioner types `/cdgc-client-setup resume <path>` — where `<path>` is the full path to the edited Review Workbook (e.g., `~/Downloads/CDGC_Import_AcmeHealth-DataGovernanceQ3/00_Review_AcmeHealth-DataGovernanceQ3.xlsx`).
-
-**On resume:**
-1. Load the workbook from `<path>`. If the path does not exist, report clearly and stop.
-2. Extract `ClientName` and `ProjectName` from the filename — the convention is `00_Review_<ClientName>-<ProjectName>.xlsx`. If the filename doesn't match this pattern, ask the practitioner to confirm both values.
-3. Validate the workbook:
-   - All expected asset-type sheets are present
-   - Required columns exist on each sheet (use same column specs as Step 2)
-   - Count remaining TODO cells and report them
-   - Flag any rows where a parent reference column contains a name that does not appear in the corresponding parent sheet (broken parent link — will fail on import)
-4. Present a resume summary:
-   ```
-   Resuming from: <path>
-   Client: <ClientName>  |  Project: <ProjectName>
-
-   ── Workbook Status ──────────────────────────────────────────────
-     Domains          : <N> rows  (<N> TODO remaining)
-     Subdomains       : <N> rows  (<N> TODO remaining)
-     Business Terms   : <N> rows  (<N> TODO remaining)
-     Policies         : <N> rows  (<N> TODO remaining)
-     Regulations      : <N> rows  (<N> TODO remaining)
-     Systems          : <N> rows  (<N> TODO remaining)
-     Data Sets        : <N> rows  (<N> TODO remaining)
-     DQ Rule Templates: <N> rows  (<N> TODO remaining)
-     Relationships    : <N> rows  (<N> TODO remaining)
-     Broken parent links: <N> (listed below if any)
-
-   ── Attention Items ──────────────────────────────────────────────
-     <list any TODO rows or broken parent links>
-
-   ─────────────────────────────────────────────────────────────────
-   How would you like to import the files once generated?
-
-     A) Manual UI (default) — upload each file via the CDGC UI
-     B) API (automated) — I will import programmatically and poll until complete
-        Requires your IDMC org URL, username, and password.
-   ```
-5. Wait for the practitioner's import method choice, then proceed to Step 4 (generate import files). Do not repeat Steps 1–3.
+All output files and folders use the naming convention `<ClientName>-<ProjectName>` (e.g., `ClientTest-NoProjectName`). This makes it easy for services teams to manage multiple concurrent engagements for the same client.
 
 ---
 
 ## Step 0 — Intake prompt
 
-Ask the practitioner:
+Ask the user:
 
 ```
 To get started I need a few things:
@@ -183,7 +110,7 @@ To get started I need a few things:
 If you only have some documents (e.g., just a data dictionary), that's fine — I'll extract what I can and flag the gaps.
 ```
 
-Wait for the practitioner's response before proceeding.
+Wait for the user's response before proceeding.
 
 ---
 
@@ -341,7 +268,7 @@ This makes it immediately obvious to a reviewer where attention is needed.
 
 ## Step 3 — Present summary and ask for approval
 
-After generating the Review Workbook, present a console summary to the practitioner:
+After generating the Review Workbook, present a console summary to the user:
 
 ```
 Review Workbook generated: ~/Downloads/CDGC_Import_<ClientName>-<ProjectName>/00_Review_<ClientName>-<ProjectName>.xlsx
@@ -365,34 +292,22 @@ Review Workbook generated: ~/Downloads/CDGC_Import_<ClientName>-<ProjectName>/00
 What would you like to do?
 
   1. Approve — generate the 14 import files now
-  2. Send workbook for client review — I'll come back when it's returned
-     (resume later with: /cdgc-client-setup resume <path-to-edited-workbook>)
+  2. I'll edit the Review Workbook offline — come back when done
+     (type: /cdgc-client-setup resume <path-to-edited-workbook>)
   3. Make specific changes now — tell me what to update
   4. Re-run with different documents or fallback option
 ```
 
-Wait for the practitioner's response. Do not proceed to Step 4 until explicitly approved.
+Wait for the user's response. Do not proceed to Step 4 until the user explicitly approves.
 
-**If option 1 (approve):** ask import method before generating files:
-```
-How would you like to import the files once generated?
+### Resume flow (option 2)
 
-  A) Manual UI (default) — upload each file yourself via the CDGC UI
-  B) API (automated) — I will import programmatically and poll until complete
-     Requires your IDMC org URL, username, and password.
-     Not available for SAML-only orgs without API access enabled.
-```
-Store as `IMPORT_METHOD`. If B, collect `ORG_URL`, `LOGIN_URL`, `USERNAME`, `PASSWORD`. Inform the practitioner: credentials are used only for this session and are not stored.
-
-### Known reasons API import may not work
-
-| Reason | Recommendation |
-|--------|---------------|
-| No Import privilege in Administrator | Ask org admin to grant Import privilege, or use Option A |
-| SAML-only org with no local user accounts | API auth requires a local IDMC account — use Option A |
-| Pod URL unknown | Find it in IDMC → Administrator → Organization → Pod URL |
-| Firewall or network restrictions blocking outbound HTTPS | Use Option A |
-| JWT token expired mid-import (30 min TTL) | Script handles this by re-authenticating if a 401 is returned |
+When the user types `/cdgc-client-setup resume <path>`:
+- Load the edited workbook from the given path
+- Skip Steps 0–3
+- Validate that required columns are present and values are non-empty for all non-TODO rows
+- Report any remaining TODOs and ask: proceed anyway or fix first?
+- If proceeding, go to Step 4
 
 ### Inline edit flow (option 3)
 
@@ -402,44 +317,6 @@ Accept natural language corrections:
 - "Remove the TODO from Regulation — use HIPAA and HITECH only"
 
 Apply the changes to the in-memory extraction dict, regenerate the Review Workbook, and re-present the summary.
-
----
-
-## Client handoff — sending the workbook for review
-
-When the practitioner selects option 2, provide the following handoff guidance:
-
-```
-The Review Workbook is ready to share:
-  ~/Downloads/CDGC_Import_<ClientName>-<ProjectName>/00_Review_<ClientName>-<ProjectName>.xlsx
-
-── What to tell your reviewer ──────────────────────────────────────
-
-  SAFE TO EDIT — these columns are yours to fill in or correct:
-    • Description, Alias Names, Business Logic, Examples
-    • Stakeholder: Governance Owner, Stakeholder: Governance Administrator
-      (use email addresses of actual users in the CDGC org)
-    • Lifecycle (valid values: Draft, In Review, Published, Obsolete)
-    • Any cell showing a red TODO — these must be filled before import
-    • Any cell showing orange or yellow — review and correct if wrong
-
-  DO NOT EDIT — these columns affect import integrity:
-    • Reference ID — if already populated, do not change
-    • Name — changing a name breaks parent references in other sheets
-    • Parent: Domain / Parent: Subdomain / Parent: System — must exactly
-      match the Name of an asset in the corresponding sheet
-    • Confidence, Review Notes — these columns are stripped on import;
-      editing them has no effect but do not delete them
-    • Sheet names — do not rename, add, or remove sheets
-
-  CONFLICTS SHEET — if a ⚠ Conflicts — RESOLVE FIRST sheet is present,
-  resolve those naming conflicts before approving. Unresolved conflicts
-  will produce inconsistent data in the CDGC environment.
-
-── To resume once the workbook is returned ─────────────────────────
-  /cdgc-client-setup resume <path-to-edited-workbook>
-────────────────────────────────────────────────────────────────────
-```
 
 ---
 
@@ -467,9 +344,8 @@ Once approved, write and execute a Python script that reads the Review Workbook 
 Rules:
 - Strip `Confidence` and `Review Notes` columns before writing
 - Skip logic is sheet-aware:
-  - All sheets except Relationships and DQ Rule Template: skip if `Name` is empty or starts with `TODO`
+  - All sheets except Relationships: skip if `Name` is empty or starts with `TODO`
   - Relationships sheet: skip if `Source Asset` or `Target Asset` is empty or starts with `TODO` (Relationships have no `Name` column)
-  - DQ Rule Template sheet: skip if `Name` is empty or starts with `TODO`, OR if `Criticality` or `Measuring Method` is empty or starts with `TODO` — CDGC rejects DQ Rule Templates missing these required fields, so a row with a name but no substance must be skipped rather than written as an empty skeleton
 - Auto-generate `Reference ID` values if blank using a customer-specific prefix derived from the client name — take the first letter of each word, uppercase, up to 4 characters (e.g., `Acme Healthcare` → `AH`, `ONC HealthcareDemo` → `OH`). Do NOT use bare CDGC prefixes like `DOM-1`, `BT-1` — those collide with system-generated IDs and are rejected on create. Use `<PREFIX>DOM-1`, `<PREFIX>BT-1`, etc.
 - Validate `Operation` = `Create`, `Lifecycle` is a valid value, boolean fields are lowercase `true`/`false`
 - Report a count of skipped rows and why
@@ -478,13 +354,36 @@ All files go to `~/Downloads/CDGC_Import_<ClientName>-<ProjectName>/`.
 
 ---
 
-## Step 5 — Import
+## Step 4b — Generate HTML viewers (run immediately after files are written)
 
-Branch on `IMPORT_METHOD` chosen at approval (Step 3) or resume.
+After all 14 xlsx files are written, run the HTML generation script from `/cdgc-demo-live` (the section labeled "HTML Output — run immediately after delivery script"). Fill in `COMPANY_NAME` (use the client name) and `NEW_PREFIX` from the Reference ID prefix used in the files.
+
+This produces two files and opens both in the browser:
+- `CDGC_<CompanyName>_Preview.html` — standalone file browser, record counts in sidebar
+- `CDGC_Review_Workbook_<PREFIX>_v1.html` — Import Preview tab (default) + Overview & TODOs tab, sidebar shows both record count and issue badge
+
+The conflicts shown in the Review Workbook should reference the actual document names from Step 1 — not generic placeholders.
+
+Then open both:
+```bash
+open ~/Downloads/CDGC_<CompanyName>_Preview.html
+open ~/Downloads/CDGC_Review_Workbook_<PREFIX>_v1.html
+```
+
+Tell the user:
+```
+Two interactive HTML viewers are now open alongside your Excel files:
+
+  📋 CDGC_<CompanyName>_Preview.html       — Browse all 14 files
+  📝 CDGC_Review_Workbook_<PREFIX>_v1.html — Action items and per-file review
+
+The Review Workbook opens on the Import Preview tab. Switch to Overview & TODOs to see
+all flagged items with checkboxes — resolve these before importing.
+```
 
 ---
 
-### Option A — Manual UI import
+## Step 5 — Import instructions
 
 Tell the user:
 
@@ -510,236 +409,15 @@ Import in this order — one file at a time:
   14_Relationships.xlsx       ← import last
 
 Wait for COMPLETED status before uploading the next file.
+
+Once all files are imported, launch the **CDGC Live Dashboard** to see everything live:
+
+```
+cd ~/Documents/CDGC && python3 cdgc_dashboard.py
 ```
 
----
-
-### Option B — API import
-
-Write and execute a Python script that authenticates, imports each file in order, polls for completion, and runs a post-import verification scan.
-
-This is the validated, hardened version — tested end-to-end 2026-05-12, 132 assets confirmed. Also available as `cdgc_api_import.py` in the repo.
-
-Key design decisions:
-- **`requests` multipart with explicit XLSX content type** — curl subprocess format was rejected server-side (jobs returned COMPLETED with `tasks:[]`); `requests` with explicit content types is the only working approach
-- **`poll_job` circuit breaker** — 72 polls max (6 minutes), 502/503/504 retry, empty response handling
-- **Post-import verification scan** — reuses existing JWT to confirm actual counts per asset type
-
-```python
-import requests
-import getpass
-import time
-import sys
-import json
-from pathlib import Path
-
-LOGIN_URL  = "https://dmp-us.informaticacloud.com"
-ORG_URL    = "https://idmc-api.dmp-us.informaticacloud.com"
-IMPORT_DIR = Path("~/Downloads/CDGC_Import_<ClientName>-<ProjectName>/").expanduser()
-
-FILES_IN_ORDER = [
-    "01_Domain.xlsx",
-    "02_Subdomain.xlsx",
-    "03_Regulation.xlsx",
-    "04_Policy.xlsx",
-    "05_Legal_Entity.xlsx",
-    "06_Business_Area.xlsx",
-    "07_Geography.xlsx",
-    "08_System.xlsx",
-    "09_AI_System.xlsx",
-    "10_AI_Model.xlsx",
-    "11_Business_Term.xlsx",
-    "12_Data_Set.xlsx",
-    "13_DQ_Rule_Template.xlsx",
-    "14_Relationships.xlsx",
-]
-
-def authenticate(username, password):
-    resp = requests.post(
-        f"{LOGIN_URL}/identity-service/api/v1/Login",
-        json={"username": username, "password": password},
-        timeout=30
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    session_id = data["sessionId"]
-    org_id = data["orgId"]
-    resp = requests.get(
-        f"{LOGIN_URL}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234",
-        headers={"IDS-SESSION-ID": session_id},
-        cookies={"USER_SESSION": session_id},
-        timeout=30
-    )
-    resp.raise_for_status()
-    token_data = resp.json()
-    jwt_token = token_data.get("token") or token_data.get("jwt_token") or token_data.get("access_token")
-    print(f"  ✓ Authenticated — orgId: {org_id}")
-    return jwt_token, org_id
-
-def import_file(jwt_token, org_id, filepath):
-    headers = {
-        "Authorization": f"Bearer {jwt_token}",
-        "X-INFA-ORG-ID": org_id,
-    }
-    with open(filepath, "rb") as f:
-        files = {
-            "file": (filepath.name, f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-            "config": (None, '{"validationPolicy":"CONTINUE_ON_ERROR_WARNING"}', "application/json"),
-        }
-        resp = requests.post(
-            f"{ORG_URL}/data360/content/import/v1/assets",
-            headers=headers,
-            files=files,
-            timeout=60)
-    if resp.status_code == 401:
-        return None, "401"
-    if not resp.text.strip():
-        return None, "Empty response from import endpoint"
-    try:
-        data = resp.json()
-    except Exception:
-        return None, f"Invalid response: {resp.text[:200]}"
-    if resp.status_code not in (200, 201, 202):
-        return None, f"HTTP {resp.status_code}: {resp.text[:300]}"
-    job_id = data.get("jobId") or data.get("id")
-    if job_id:
-        return job_id, None
-    return None, f"No jobId in response: {resp.text[:300]}"
-
-def poll_job(jwt_token, org_id, job_id, filename):
-    url = f"{ORG_URL}/data360/observable/v1/jobs/{job_id}"
-    headers = {"Authorization": f"Bearer {jwt_token}", "X-INFA-ORG-ID": org_id}
-    terminal = {"COMPLETED", "FAILED", "COMPLETED_WITH_ERRORS", "PARTIAL_COMPLETED", "PARTIAL_SUCCESS"}
-    dots = 0
-    for attempt in range(72):  # max 6 minutes
-        try:
-            resp = requests.get(url, headers=headers, timeout=30)
-        except requests.exceptions.RequestException:
-            time.sleep(5)
-            continue
-        if resp.status_code in (429, 502, 503, 504):
-            time.sleep(10)
-            continue
-        if not resp.text.strip():
-            time.sleep(5)
-            continue
-        try:
-            data = resp.json()
-        except Exception:
-            time.sleep(5)
-            continue
-        status = data.get("status", "UNKNOWN")
-        if status in terminal:
-            print(f"\r  [{filename}] {status}          ")
-            if status in ("COMPLETED_WITH_ERRORS", "PARTIAL_COMPLETED", "PARTIAL_SUCCESS"):
-                print(f"  ⚠ Detail: {json.dumps(data.get('errors', data.get('detail', '')))[:300]}")
-            return status, data
-        print(f"\r  [{filename}] {status}{'.' * (dots % 4)}   ", end="", flush=True)
-        dots += 1
-        time.sleep(5)
-    print(f"\r  [{filename}] TIMEOUT — job did not complete in 6 minutes")
-    return "TIMEOUT", {}
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-print("\nCDGC API Import")
-print("───────────────────────────────────────────")
-username = input("IDMC Username: ")
-password = getpass.getpass("IDMC Password: ")
-
-print("\nAuthenticating...")
-jwt_token, org_id = authenticate(username, password)
-
-results = []
-for fname in FILES_IN_ORDER:
-    fpath = IMPORT_DIR / fname
-    if not fpath.exists():
-        print(f"\nSKIP — file not found: {fpath}")
-        results.append((fname, "SKIPPED"))
-        continue
-
-    print(f"\nImporting {fname}...")
-    job_id, err = import_file(jwt_token, org_id, fpath)
-
-    if err == "401":
-        print("  Token expired — re-authenticating...")
-        jwt_token, org_id = authenticate(username, password)
-        job_id, err = import_file(jwt_token, org_id, fpath)
-
-    if err:
-        print(f"  FAILED to submit: {err}")
-        results.append((fname, "SUBMIT_FAILED"))
-        print(f"\nFATAL — stopping import. Fix {fname} and retry.")
-        sys.exit(1)
-
-    status, detail = poll_job(jwt_token, org_id, job_id, fname)
-    results.append((fname, status))
-
-    if status in ("FAILED", "TIMEOUT"):
-        print(f"\nFATAL — {fname} {status}. Stopping import.")
-        print(json.dumps(detail)[:500])
-        sys.exit(1)
-
-print("\n── Import Summary ──────────────────────────────────────────")
-for fname, status in results:
-    icon = "✓" if status == "COMPLETED" else "⚠" if status == "COMPLETED_WITH_ERRORS" else "✗"
-    print(f"  {icon}  {fname:<45} {status}")
-print("────────────────────────────────────────────────────────────")
-
-# ── Verification scan ─────────────────────────────────────────────────────────
-print("\nVerifying assets in org...\n")
-time.sleep(3)
-
-VERIFY_TYPES = [
-    ("Domains",           "com.infa.ccgf.models.governance.Domain"),
-    ("Subdomains",        "com.infa.ccgf.models.governance.Subdomain"),
-    ("Regulations",       "com.infa.ccgf.models.governance.Regulation"),
-    ("Policies",          "com.infa.ccgf.models.governance.Policy"),
-    ("Legal Entities",    "com.infa.ccgf.models.governance.LegalEntity"),
-    ("Business Areas",    "com.infa.ccgf.models.governance.BusinessArea"),
-    ("Geographies",       "com.infa.ccgf.models.governance.Geography"),
-    ("Systems",           "com.infa.ccgf.models.governance.System"),
-    ("AI Systems",        "com.infa.ccgf.models.governance.AISystem"),
-    ("AI Models",         "com.infa.ccgf.models.governance.AIModel"),
-    ("Business Terms",    "com.infa.ccgf.models.governance.BusinessTerm"),
-    ("Data Sets",         "com.infa.ccgf.models.governance.DataSet"),
-    ("DQ Rule Templates", "com.infa.ccgf.models.governance.RuleTemplate"),
-]
-
-h_s = {"Authorization": f"Bearer {jwt_token}", "X-INFA-ORG-ID": org_id, "Content-Type": "application/json"}
-grand_total = 0
-for label, ct in VERIFY_TYPES:
-    for attempt in range(3):
-        r = requests.post(
-            f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
-            headers=h_s,
-            json={"from": 0, "size": 100,
-                  "filterSpec": [{"type": "simple", "attribute": "core.classType", "values": [ct]}]},
-            timeout=30)
-        if not r.text.strip():
-            time.sleep(2)
-            continue
-        try:
-            body = r.json()
-            count = len(body.get("hits", []))
-            break
-        except Exception:
-            time.sleep(2)
-            continue
-    else:
-        count = "?"
-    grand_total += count if isinstance(count, int) else 0
-    icon = "✓" if isinstance(count, int) and count > 0 else "⚠"
-    print(f"  {icon}  {label:<25}: {count}")
-    time.sleep(0.3)
-
-print(f"\n  Total assets in org: {grand_total}")
-print("────────────────────────────────────────────────────────────\n")
+Opens at http://localhost:8080 — live asset counts, Business Glossary, Policies, DQ Rules, and AI Assets.
 ```
-
-Substitute `<ClientName>-<ProjectName>` in `IMPORT_DIR` from the names collected in Step 0. `LOGIN_URL` and `ORG_URL` default to `dmp-us` — change the pod region prefix if the client is on a different pod (e.g., `dmp-eu`).
-
-**Note:** AI Systems and AI Models will show `⚠ 0` in the verification scan — classType search is broken on suborg for those two types. Verify counts in the CDGC UI directly.
 
 ---
 
@@ -798,20 +476,6 @@ Six scenarios covering the full range of input quality and fallback behavior. Ea
 **Tests:** Are the three behaviors clearly distinct? Does each produce a correctly labeled and color-coded workbook? Does Option C include a gap interview log?
 **Status:** ✅ Passed (Test Run 4)
 **Result:** All three workbooks produced and visually distinct. Option A: 0 gap rows filled (red TODO). Option B: 4 domains, 4 systems, 5 data sets, 4 business areas auto-filled from Healthcare defaults (green). Option C: 3 domains, 2 systems, 2 data sets, 2 business areas from simulated user answers (blue); Legal Entities skipped by user; Gap Interview Log sheet included. Policies and Regulations HIGH across all three — confirming extracted content is not affected by fallback choice.
-
----
-
-### Scenario G — Multi-session resume flow (client edited workbook)
-**Input:** Review Workbook generated in a prior session, edited offline (TODO cells filled, Governance Owner columns populated, one domain name corrected), then resumed via `/cdgc-client-setup resume <path>`
-**Expected:** Skill loads the workbook without re-parsing documents. Correctly extracts `ClientName` and `ProjectName` from the filename. Validates columns and parent references. Reports remaining TODOs. Asks import method at resume time. Proceeds directly to Step 4 and generates 14 import files reflecting the edited values.
-**Tests:**
-- Does filename parsing correctly recover client and project name?
-- Are broken parent links detected and flagged before generating import files?
-- Does the workbook validation catch a missing required column?
-- Are the edited values (not the original extracted values) reflected in the import files?
-- Does import method selection appear at resume rather than at intake?
-**Status:** ✅ Passed (Test Run 7 — 2026-05-14)
-**Result:** All 6 test cases passed. Resume entry point correctly skipped document parsing, parsed client/project from filename, counted 115 remaining TODOs, detected 1 broken parent link, deferred import method to resume time, and confirmed client-edited values in generated files. One bug found: DQ Rule Template skip logic too permissive — fixed in Step 4 rules.
 
 ---
 
@@ -1025,41 +689,6 @@ This section records the actual test runs performed during skill development. It
 
 ---
 
-### Test run 7 — Scenario G (multi-session resume flow)
-
-**Date:** 2026-05-14
-**Client / Project:** ResumeTest-Scenario7
-**Input:** `00_Review_ResumeTest-Scenario7.xlsx` — Review Workbook produced by Test Run 1 (Scenario A), then edited programmatically to simulate a client-returned workbook:
-- 73 `Stakeholder: Governance Administrator` TODO cells filled with `admin@resumetest.com`
-- 9 `Regulation URL` TODO cells filled with a real URL
-- 1 broken parent link introduced: BT-1 `Patient Id` → `Parent: Domain` changed to `PatientData | DOM-1` (does not exist in Domain sheet)
-- 115 TODO cells deliberately left unfilled (Primary Contact, Secondary Contact, DQ Rule Template fields)
-**Fallback:** N/A — resume flow skips document parsing entirely
-
-**Test case results:**
-
-| # | Test | Result |
-|---|------|--------|
-| 1 | Resume entry point triggered — no document re-parsing | ✅ Passed |
-| 2 | ClientName=`ResumeTest`, ProjectName=`Scenario7` correctly parsed from filename | ✅ Passed |
-| 3 | 115 remaining TODO cells counted correctly per sheet | ✅ Passed |
-| 4 | Broken parent link detected: BT-1 `PatientData` not found in Domain sheet | ✅ Passed |
-| 5 | Import method prompt deferred to resume time (not at intake) | ✅ Passed (confirmed by architecture — intake step not executed in resume path) |
-| 6 | `admin@resumetest.com` confirmed in all 4 Domain rows of `01_Domain.xlsx` (client edit reflected, not original TODO) | ✅ Passed |
-
-**Import files generated:** 10 of 11 written (DQ Rule Template skipped — all rows were TODO, expected and correct)
-
-**Key observations:**
-- Broken parent link was flagged in the validation summary and preserved in the import file (not silently dropped) — the practitioner was warned and chose to proceed. This is the correct behavior: the skill surfaces the problem, the human decides.
-- TODO rows in Business Term (Primary/Secondary Contact) did not block the row from being written — only rows where `Name` is empty or starts with TODO are skipped. Contact fields being TODO is non-blocking. This matches the skip logic defined in Step 4.
-- DQ Rule Template correctly returned 0 written rows — the single row's `Name` was non-TODO but all substantive fields were TODO; the row was written with empty data. **Correction needed:** the skip logic should be tightened for DQ Rule Templates — a row with Name populated but all substantive fields empty should be skipped too, not written as an empty skeleton.
-
-**Bug found:** DQ Rule Template row with a non-TODO `Name` but empty `Criticality`, `Dimension`, `Measuring Method`, and `Technical Description` was included in `13_DQ_Rule_Template.xlsx` as a nearly-empty row. CDGC will reject this on import (required fields missing).
-
-**Fix to apply to skill Step 4:** Add a DQ Rule Template-specific skip rule — skip rows where `Name` is populated but `Criticality` OR `Measuring Method` is empty or TODO.
-
----
-
 ### Summary of corrections made to the skill definition
 
 | # | Issue | Where | Fix |
@@ -1072,13 +701,6 @@ This section records the actual test runs performed during skill development. It
 | 6 | "customer" used throughout instead of "client" | All steps | Global replace: customer → client |
 | 7 | No Project Name in folder/file naming | All steps | Added `<ClientName>-<ProjectName>` convention throughout |
 | 8 | Policy extractor used section-number hardcode (`4\.\d+`) | Step 1 PDF parser notes | Updated to generic numbered subsection pattern |
-| 9 | Import method asked at intake (Step 0) before review workbook existed | Step 0 / Step 3 | Moved import method question to approval/resume time — only asked when files are about to be generated |
-| 10 | Resume flow buried as option 2 of 4 in Step 3 — treated as edge case | All sections | Resume promoted to first-class entry point with its own section before Step 0; documented as the expected path for real engagements |
-| 11 | No guidance on what the client can and cannot edit in the Review Workbook | Step 3 | Added Client Handoff section with explicit safe/do-not-edit column lists |
-| 12 | Workflow overview implied single-session only | Overview section | Updated to document both single-session (demo) and multi-session (engagement) flows explicitly |
-| 13 | "SE" / "user" used throughout — assumed a specific role | All steps | Replaced with "practitioner" (noun) and "you" (second person) throughout |
-| 14 | `cdgc_api_import.py` and `cdgc_discover_classtypes.py` not documented in skill or guide | Skill prerequisites, Guide contents | Both scripts added to contents table, installation cp commands, and dedicated sections in the guide |
-| 15 | DQ Rule Template row with non-TODO `Name` but empty required fields written as empty skeleton — CDGC rejects on import | Step 4 skip logic | Added DQ Rule Template-specific skip: also skip if `Criticality` or `Measuring Method` is empty or TODO (Test Run 7) |
 
 ---
 
