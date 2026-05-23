@@ -52,8 +52,8 @@ All skills live in `.claude/commands/` and are **auto-loaded** when you open thi
 
 | Skill | What it does |
 |-------|-------------|
-| `/cdgc-setup` | Generate a full CDGC demo environment for any industry vertical — no client documents required. Produces 14 ready-to-import Excel files. |
-| `/cdgc-client-setup` | Build a CDGC environment from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries. Parses, scores confidence, generates a Review Workbook, then produces 14 import files. |
+| `/cdgc-setup` | Generate a full CDGC demo environment for any industry vertical — no client documents required. Produces 14 ready-to-import Excel files plus two interactive HTML viewers: a file browser and a Review Workbook with action items and issue tracking. |
+| `/cdgc-client-setup` | Build a CDGC environment from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries. Parses, scores confidence, generates a Review Workbook, then produces 14 import files and two interactive HTML viewers. |
 | `/cdgc-wipe` | Wipe all governance assets from a CDGC org before reloading. Deletes in dependency order, requires explicit confirmation. |
 
 **Full skills reference:** [SKILLS_REFERENCE.md](.claude/commands/SKILLS_REFERENCE.md)
