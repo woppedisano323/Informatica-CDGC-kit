@@ -142,6 +142,7 @@ Sheet name: `AI System`
 Columns: `Reference ID`, `Name`, `Description`, `AI System Type`, `Development Stage`, `Lifecycle`, `Operation`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
 - `AI System Type` valid values: `AI Application`, `AI Agent`, `Retrieval System`, `Conversational`
 - `Development Stage` valid values: `In Development`, `Validation`, `Production`
+- `Lifecycle` must be `Published` — `In Review`, `Active`, and `Draft` are rejected on import
 
 #### AI Model
 Sheet name: `AI Model`
@@ -149,6 +150,7 @@ Columns: `Reference ID`, `Name`, `Description`, `AI Model Purpose`, `Architectur
 - `Architecture Type` valid values: `Decision Trees`, `Logistic Regression`, `Linear Regression`, `Others`
 - `Bias` / `Drift`: numeric values only (0–100) — text strings are rejected
 - `Model Format` valid values: `Docker`, `ONNX`, `Other`
+- `Lifecycle` must be `Published` — `In Review`, `Active`, and `Draft` are rejected on import
 
 #### Business Term
 Sheet name: `Business Term`
@@ -157,6 +159,9 @@ Columns: `Reference ID`, `Name`, `Description`, `Alias Names`, `Business Logic`,
 - `Parent: Subdomain` format: `Subdomain Name | <PREFIX>SD-X` (e.g., `Customer Identity | RKFSD-1`)
 - `Critical Data Element`: `true` or `false`
 - `Parent: Business Term`, `Parent: Metric`, `Parent: Domain`: leave blank
+- `Format Type` valid values: `Number`, `Decimal`, `Percentage`, `Text`, `Fraction`, `Time`, `Date`, `Datetime` — do NOT use `String`, `Boolean`, or `Integer` (rejected on import; use `Text` for string/boolean, `Number` for integer)
+- `Classifications`: leave blank — requires pre-existing classification assets in the org; populating this fails import with "asset cannot be found"
+- `Reference Data`: leave blank — requires Reference 360 assets in the org; populating this fails import with "Invalid reference Id"
 
 #### Data Set
 Sheet name: `Data Set`
@@ -1031,7 +1036,13 @@ Fill in `IMPORT_DIR` from the customer name collected in Step 1. `LOGIN_URL` and
 
 ## Step 5 — Confirmation checklist
 
-After all imports, verify in the CDGC UI:
+After all imports, verify in the CDGC UI. Then launch the **CDGC Live Dashboard** for a real-time view of all governance assets:
+
+```
+cd ~/Documents/CDGC && python3 cdgc_dashboard.py
+```
+
+You will be prompted for your IDMC username and password — use the same credentials you use to log into CDGC. Opens at http://localhost:8080 automatically once authenticated — shows live asset counts, Business Glossary, Policies, DQ Rules, AI Assets, Workflows, and API Explorer connected directly to your org.
 
 - [ ] Glossary tab shows expected Domains with nested Subdomains
 - [ ] Business Terms visible under each Subdomain
