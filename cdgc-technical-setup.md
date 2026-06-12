@@ -305,6 +305,25 @@ Navigate to the **Technical Coverage** tab:
 - [ ] EMAIL column shows "Email Address" Business Term
 - [ ] CDGC → Explore → search `SSN` → column shows Business Term in glossary
 - [ ] CDGC → Explore → search `columns related to data classification 'Social Security Number'` → PII columns appear
+- [ ] Business Terms show Classifications tab populated (requires Step 7)
+
+---
+
+## Step 7 — Link MCC classifications to Business Terms
+
+MCC classifies columns automatically. This step links those classifications to Business Terms so the full chain is visible: column → Business Term → classification → policy.
+
+**Prerequisite — promote MCC classifications in CDGC UI first:**
+1. CDGC → **Catalog → Classifications** → Generated Classifications
+2. Select SSN, Email Address, Date of Birth (and any others relevant to the vertical)
+3. Click **Promote** → wait ~2 minutes
+
+**Then run:**
+```bash
+python3 ~/Documents/CDGC/cdgc_link_classifications.py
+```
+
+Enter credentials when prompted. The script shows a match table (EXACT/HIGH/FUZZY confidence) and requires `CONFIRM` before writing anything. Failed links can be done manually via Business Term → Classifications tab in the UI.
 
 ---
 
@@ -342,6 +361,7 @@ Not everything in this skill can be scripted — here's the current state:
 | Link columns to terms | ✅ Yes | Validated — `cdgc_link_technical_assets.py` |
 | Gap analysis + new terms | ✅ Yes | Validated — `cdgc_gap_analyzer.py` |
 | Import governance assets | ✅ Yes | Validated — bulk import API |
+| Link classifications to Business Terms | ✅ Yes | `cdgc_link_classifications.py` — run after promoting MCC classifications |
 
 **Future automation path:** The Informatica Developer Portal (`developer.informatica.com`)
 likely contains the catalog source creation endpoints. If access is obtained, Steps 2–3

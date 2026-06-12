@@ -160,7 +160,7 @@ Columns: `Reference ID`, `Name`, `Description`, `Alias Names`, `Business Logic`,
 - `Critical Data Element`: `true` or `false`
 - `Parent: Business Term`, `Parent: Metric`, `Parent: Domain`: leave blank
 - `Format Type` valid values: `Number`, `Decimal`, `Percentage`, `Text`, `Fraction`, `Time`, `Date`, `Datetime` — do NOT use `String`, `Boolean`, or `Integer` (rejected on import; use `Text` for string/boolean, `Number` for integer)
-- `Classifications`: leave blank — requires pre-existing classification assets in the org; populating this fails import with "asset cannot be found"
+- `Classifications`: leave blank on import — classification assets don't exist yet at this stage. Run `/cdgc-technical-setup` Step 7 after MCC scan to link them via `cdgc_link_classifications.py`
 - `Reference Data`: leave blank — requires Reference 360 assets in the org; populating this fails import with "Invalid reference Id"
 
 #### Data Set
