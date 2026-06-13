@@ -191,8 +191,8 @@ VERIFY_TYPES = [
     ("Business Areas",    "com.infa.ccgf.models.governance.BusinessArea"),
     ("Geographies",       "com.infa.ccgf.models.governance.Geography"),
     ("Systems",           "com.infa.ccgf.models.governance.System"),
-    ("AI Systems",        "com.infa.ccgf.models.governance.AISystem"),
-    ("AI Models",         "com.infa.ccgf.models.governance.AIModel"),
+    ("AI Systems",        "com.infa.ccgf.models.AIModel.AISystem"),
+    ("AI Models",         "com.infa.ccgf.models.AIModel.AIModel"),
     ("Business Terms",    "com.infa.ccgf.models.governance.BusinessTerm"),
     ("Data Sets",         "com.infa.ccgf.models.governance.DataSet"),
     ("DQ Rule Templates", "com.infa.ccgf.models.governance.RuleTemplate"),
@@ -205,7 +205,7 @@ for label, ct in VERIFY_TYPES:
         r = requests.post(
             f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
             headers=h_s,
-            json={"from": 0, "size": 0,
+            json={"from": 0, "size": 100,
                   "filterSpec": [{"type": "simple", "attribute": "core.classType", "values": [ct]}]},
             timeout=30)
         if not r.text.strip():
@@ -213,7 +213,8 @@ for label, ct in VERIFY_TYPES:
             continue
         try:
             body = r.json()
-            count = body.get("total", body.get("totalHits", len(body.get("hits", []))))
+            raw = body.get("total", len(body.get("hits", [])))
+            count = raw.get("value", len(body.get("hits", []))) if isinstance(raw, dict) else int(raw)
             break
         except Exception:
             time.sleep(2)

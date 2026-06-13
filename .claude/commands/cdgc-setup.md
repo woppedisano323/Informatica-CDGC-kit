@@ -176,6 +176,7 @@ Columns: `Reference ID`, `Name`, `Description`, `Criticality`, `Dimension`, `Ena
 - `Criticality` valid values: `High`, `Medium`, `Low`
 - `Dimension` valid values: `Accuracy`, `Validity`, `Completeness`, `Consistency`, `Uniqueness`, `Timeliness`
 - `Enable Automation`: `true` or `false`
+- `Frequency` valid values: `Hourly`, `Daily`, `Weekly`, `Monthly`, `On Demand` — do NOT use `Real-time` (rejected on import, causes PARTIAL_COMPLETED)
 - `Measuring Method`: use `TechnicalScript` for demo environments — allows SQL/expression in `Technical Description`. Do NOT use `InformaticaCloudDataQuality` — it requires a `Technical Rule Reference` (a live CDQE rule ID from the org) and will fail without one.
 - `Target` / `Threshold`: numeric values only (e.g., `100`, `0`) — no percent sign
 - `Primary Glossary`: **name only** (e.g., `Social Security Number`) — do NOT use `Name | RefID` format (rejected). This links the DQ Rule to the Business Term; the relationship appears on both sides in the CDGC UI. DQ Rule Templates must be imported after Business Terms — glossary links are validated on import.
@@ -1070,6 +1071,7 @@ You will be prompted for your IDMC username and password — use the same creden
 | Business Terms not visible after import | Populate `Parent: Subdomain`, not `Parent: Domain` — single parent rule |
 | `Parent already exists` on Relationships | `System → Data Set` already created by Parent: System in Data Set import — remove that row from Relationships |
 | `Missing field: Technical Rule Reference` | `InformaticaCloudDataQuality` measuring method requires a live CDQE rule ID — change to `TechnicalScript` |
+| DQ Rule Template file shows PARTIAL_COMPLETED | `Frequency` contains `Real-time` — not a valid value. Change to `Daily` or `On Demand` |
 | `Invalid Primary Glossary` | `Name \| RefID` format used — use name only (e.g., `Social Security Number`) |
 | Stakeholder prompt blocking import | Stakeholder field empty or not a real org user email — populate with valid email |
 | Reference ID rejected on create | Prefix collides with CDGC auto-generated IDs — use customer-specific prefix (e.g., `RKFBT-`) |
