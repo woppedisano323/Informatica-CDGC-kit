@@ -136,56 +136,58 @@ Click **Test Connection** — must show Success before proceeding.
 
 ## Step 3 — Create MCC catalog source
 
-Guide the user through: **IDMC → Metadata Command Center → New → Catalog Source → Snowflake**
+Follow these steps exactly in **IDMC → Metadata Command Center**:
 
-| Setting | Value |
-|---|---|
-| Name | `<PREFIX>_FinancialServices` |
-| Connection | `<PREFIX>_SNOWFLAKE_CONN` |
-| Metadata change | **Retain** |
+**1. Create the catalog source**
+- Click **New** → **Catalog Source** → select **Snowflake**
+- **Name:** `<PREFIX>_<Vertical>` (e.g. `FCB_FinancialServices`) — use the customer prefix and vertical name, no spaces
+- **Connection:** select `<PREFIX>_SNOWFLAKE_CONN` created in Step 2
+- Click **Next**
 
-**Capabilities — enable these 6:**
+**2. Set the filter (critical)**
+- Under **Filter**, enter the schema path: `<DATABASE>.<SCHEMA>` (e.g. `CDGC_DEMO.FCB_DEMO`)
+- This MUST match exactly how the database and schema appear in Snowflake — case matters
+- Without a filter the scanner attempts every schema the user has access to
+
+**3. Enable capabilities**
+On the Capabilities screen, enable exactly these 5 — leave all others off:
 
 | Capability | Enable | Why |
 |---|---|---|
 | Metadata Extraction | ✓ | Tables/columns — required |
-| Data Profiling | ✓ | Row counts, null %, distinct values — **required before DQ** |
+| Data Profiling | ✓ | Row counts, null %, distinct values — required before DQ |
 | Data Quality | ✓ | Evaluates DQ rules — requires Profiling ON |
 | Data Classification | ✓ | Auto-detects PII: SSN, EMAIL, DATE_OF_BIRTH |
-| Glossary Association | ✓ | Auto-links columns to Business Terms |
-| Relationship Discovery | skip | Requires inference model — skip for demo |
-| Lineage Discovery | skip | No views/stored procs in demo schema |
-| Data Observability | skip | Needs multiple scans to build baseline |
-| Writeback | skip | Can modify source schema — too risky |
+| Glossary Association | ✓ | Auto-links columns to Business Terms during scan |
+| Relationship Discovery | ✗ | Skip — requires inference model |
+| Lineage Discovery | ✗ | Skip — no views/stored procs in demo schema |
+| Data Observability | ✗ | Skip — needs multiple scans to build baseline |
+| Writeback | ✗ | Skip — can modify source schema |
 
-**Critical:** Data Profiling must be ON for DQ results to appear. If DQ shows nothing
-after the scan, this was the missing capability — re-run with Profiling enabled.
+**4. Set Metadata change behaviour**
+- Set to **Retain** — prevents auto-deletion of catalog objects if Snowflake tables are temporarily unavailable
 
-**Runtime Environment — profiling requirement:**
+**5. Select Runtime Environment**
 | Runtime | Metadata Extraction | Data Profiling |
 |---|---|---|
 | Hosted Agent (serverless) | ✓ | ✗ not supported |
 | Shared Secure Agent | ✓ | ✗ results lost (wrong org) |
 | Dedicated Secure Agent | ✓ | ✓ required |
 
-If no dedicated Secure Agent is available, skip profiling and use `cdgc_dq_scores.py`
-to inject DQ scores directly via API. Profiling is a "live customer environment" story.
+If no dedicated Secure Agent is available, disable Data Profiling and Data Quality — use `cdgc_dq_scores.py` after the scan to inject DQ scores via API.
 
-**Warning:** Re-editing a catalog source resets capability checkboxes — re-verify all
-capabilities are enabled before re-running after any edit.
-
-**Filter:** Enter the schema path: `<database>.<schema>`
-This is critical — without a filter, the scanner will attempt every schema the user has access to.
-
-**Metadata change behaviour:** Set to **Retain**
-This prevents auto-deletion of catalog objects if the Snowflake tables are temporarily unavailable.
-
-Click **Run**. Scan takes 3–5 minutes.
+**6. Save and Run**
+- Click **Save**
+- Click **Run** — scan takes 3–5 minutes
+- Monitor status in MCC → Jobs
 
 **Expected result:** 4 tables, 57 columns ingested into CDGC.
 
-**If scan shows 0 objects:** The filter path is wrong — verify it matches exactly
-`<DATABASE>.<SCHEMA>` as shown in Snowflake (case matters).
+**Warning:** Re-editing a catalog source resets capability checkboxes — re-verify all capabilities are enabled before re-running after any edit.
+
+**If scan shows 0 objects:** The filter path is wrong — verify it matches exactly `<DATABASE>.<SCHEMA>` as shown in Snowflake (case matters).
+
+**If scan shows fewer than 57 columns:** Glossary Association ran but found no Business Terms — confirm `/cdgc-setup` import completed before the scan.
 
 ---
 
