@@ -416,7 +416,7 @@ Once all files are imported, launch the **CDGC Live Dashboard** to see everythin
 cd ~/Documents/CDGC && python3 cdgc_dashboard.py
 ```
 
-Opens at http://localhost:8080 — live asset counts, Business Glossary, Policies, DQ Rules, and AI Assets.
+You will be prompted for your IDMC username and password — use the same credentials you use to log into CDGC. Opens at http://localhost:8080 automatically once authenticated — live asset counts, Business Glossary, Policies, DQ Rules, AI Assets, Workflows, and API Explorer.
 ```
 
 ---

@@ -34,7 +34,7 @@ DELETE {ORG_URL}/data360/content/v1/assets/{externalId}?scheme=external
 
 ### AI Model / AI System — classType search broken on suborg
 
-`com.infa.ccgf.models.governance.AIModel` and `AISystem` return 0 hits from the search API on suborg accounts even when assets exist. This is a known platform bug. The working approach is to probe by sequential externalId:
+`com.infa.ccgf.models.AIModel.AIModel` and `AISystem` may return 0 hits on suborg accounts. Correct classTypes per April 2026 API docs use the `.AIModel.` namespace (NOT `.governance.`). The externalId probe below runs as a safety net in case classType search still misses them:
 
 - AI Models use prefix `<CUSTOMER_PREFIX>AIM-` (e.g., `RKFAIM-1`, `RKFAIM-2`...)
 - AI Systems use prefix `<CUSTOMER_PREFIX>AIS-` (e.g., `RKFAIS-1`, `RKFAIS-2`...)
@@ -67,8 +67,8 @@ Order matters — dependency relationships block deletion if parents are deleted
 com.infa.ccgf.models.governance.RuleTemplate       ← DQ Rule Template (NOT DataQualityRuleTemplate)
 com.infa.ccgf.models.governance.BusinessTerm
 com.infa.ccgf.models.governance.DataSet
-com.infa.ccgf.models.governance.AIModel
-com.infa.ccgf.models.governance.AISystem
+com.infa.ccgf.models.AIModel.AIModel           ← AI Model (NOT .governance.AIModel)
+com.infa.ccgf.models.AIModel.AISystem          ← AI System (NOT .governance.AISystem)
 com.infa.ccgf.models.governance.System
 com.infa.ccgf.models.governance.BusinessArea
 com.infa.ccgf.models.governance.LegalEntity
@@ -136,12 +136,15 @@ import time
 LOGIN_URL = "https://dmp-us.informaticacloud.com"
 ORG_URL   = "https://idmc-api.dmp-us.informaticacloud.com"
 
-# classType search works for all types EXCEPT AIModel and AISystem on suborg —
-# those are deleted by scanning all externalIds with known prefixes instead
+# AI Models/Systems use a different classType namespace per April 2026 API docs:
+#   com.infa.ccgf.models.AIModel.AIModel / AISystem (NOT .governance.AIModel)
+# ExternalId probe below runs as additional safety net for suborg classType bug.
 SEARCH_TYPES = [
     ("DQ Rule Templates", "com.infa.ccgf.models.governance.RuleTemplate"),
     ("Business Terms",    "com.infa.ccgf.models.governance.BusinessTerm"),
     ("Data Sets",         "com.infa.ccgf.models.governance.DataSet"),
+    ("AI Models",         "com.infa.ccgf.models.AIModel.AIModel"),
+    ("AI Systems",        "com.infa.ccgf.models.AIModel.AISystem"),
     ("Systems",           "com.infa.ccgf.models.governance.System"),
     ("Business Areas",    "com.infa.ccgf.models.governance.BusinessArea"),
     ("Legal Entities",    "com.infa.ccgf.models.governance.LegalEntity"),
@@ -309,10 +312,7 @@ if straggler_cleared:
 print("\nVerifying org is clean...\n")
 time.sleep(3)
 grand_total = 0
-ALL_TYPES = SEARCH_TYPES + [
-    ("AI Models",  "com.infa.ccgf.models.governance.AIModel"),
-    ("AI Systems", "com.infa.ccgf.models.governance.AISystem"),
-]
+ALL_TYPES = SEARCH_TYPES  # AI Models/Systems now included in SEARCH_TYPES with correct classType
 for label, class_type in ALL_TYPES:
     hits = search_type(class_type)
     count = len(hits)
