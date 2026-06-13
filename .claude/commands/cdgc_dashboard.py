@@ -458,6 +458,156 @@ def api_ai_assets():
     })
 
 
+@app.route("/api/debug_column")
+def api_debug_column():
+    """Debug: fetch SSN column with all segments to see what's returned."""
+    hs, _ = _headers()
+    COLUMN_CLASS = "com.infa.odin.models.relational.Column"
+    for seg in ["glossary", "all", "summary,glossary"]:
+        body = {"from": 0, "size": 1,
+                "filterSpec": [
+                    {"type": "simple", "attribute": "core.classType", "values": [COLUMN_CLASS]},
+                    {"type": "simple", "attribute": "core.name",      "values": ["SSN"]},
+                ]}
+        r = requests.post(
+            f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments={seg}",
+            headers=hs, json=body, timeout=30)
+        hits = r.json().get("hits", []) if r.status_code == 200 else []
+        if hits:
+            return jsonify({"segments_used": seg, "hit": hits[0]})
+    return jsonify({"error": "SSN column not found"})
+
+
+@app.route("/api/technical_coverage")
+def api_technical_coverage():
+    """Technical coverage: scanned tables + columns linked to Business Terms.
+    Builds column→term mapping dynamically from live Business Terms so it works
+    for any customer prefix, not just RKF.
+    """
+    TABLE_CLASS  = "com.infa.odin.models.relational.Table"
+    COLUMN_CLASS = "com.infa.odin.models.relational.Column"
+    TERM_CLASS   = "com.infa.ccgf.models.governance.BusinessTerm"
+
+    # Column name → Business Term name keywords for matching
+    COLUMN_TERM_HINTS = {
+        "CUSTOMER_ID":            ["customer id", "customer identifier"],
+        "SSN":                    ["social security", "ssn"],
+        "DATE_OF_BIRTH":          ["date of birth", "dob", "birth date"],
+        "EMAIL":                  ["email", "e-mail"],
+        "PHONE_NUMBER":           ["phone", "telephone"],
+        "CREDIT_SCORE":           ["credit score"],
+        "TRANSACTION_ID":         ["transaction id", "transaction identifier"],
+        "AMOUNT":                 ["transaction amount", "amount"],
+        "TRANSACTION_DATE":       ["transaction date"],
+        "POSTING_DATE":           ["post date", "posting date"],
+        "CURRENCY":               ["currency"],
+        "ACCOUNT_CODE":           ["gl account", "account number", "account code"],
+        "DEBIT_AMOUNT":           ["debit"],
+        "CREDIT_AMOUNT":          ["credit amount"],
+        "STATUS":                 ["entry status", "status"],
+        "FISCAL_PERIOD":          ["accounting period", "fiscal period"],
+        "PROBABILITY_OF_DEFAULT": ["probability of default", "pod"],
+        "LOSS_GIVEN_DEFAULT":     ["loss given default", "lgd"],
+        "PATIENT_ID":             ["patient id", "patient identifier"],
+        "DIAGNOSIS_CODE":         ["diagnosis", "icd"],
+        "PROVIDER_ID":            ["provider id", "provider identifier"],
+        "ENCOUNTER_ID":           ["encounter id"],
+        "NDC_CODE":               ["ndc", "drug code"],
+        "CLAIM_ID":               ["claim id"],
+        "ORDER_ID":               ["order id"],
+        "PRODUCT_SKU":            ["sku", "product code"],
+        "POLICY_NUMBER":          ["policy number"],
+        "RISK_SCORE":             ["risk score"],
+        "WELL_ID":                ["well id"],
+        "SUPPLIER_ID":            ["supplier id"],
+    }
+
+    try:
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_tables  = ex.submit(_search, TABLE_CLASS)
+            f_columns = ex.submit(_search, COLUMN_CLASS)
+            f_terms   = ex.submit(_search, TERM_CLASS)
+            table_hits  = f_tables.result()
+            column_hits = f_columns.result()
+            term_hits   = f_terms.result()
+
+        # Build term lookup: {term_name_lower: (ext_id, display_name)}
+        term_lookup = {}
+        for t in term_hits:
+            s = t.get("summary") or {}
+            name = s.get("core.name", "")
+            ext_id = t.get("core.externalId") or s.get("core.externalId", "")
+            if name and ext_id:
+                term_lookup[name.lower()] = (ext_id, name)
+
+        def find_term(col_name):
+            """Match column name to a Business Term using hints then fuzzy fallback."""
+            hints = COLUMN_TERM_HINTS.get(col_name.upper(), [])
+            for hint in hints:
+                for tname_lower, (ext_id, display) in term_lookup.items():
+                    if hint in tname_lower:
+                        return ext_id, display
+            # Fuzzy fallback: column name words appear in term name
+            col_words = set(col_name.lower().replace("_", " ").split())
+            for tname_lower, (ext_id, display) in term_lookup.items():
+                term_words = set(tname_lower.replace("_", " ").split())
+                if col_words & term_words:
+                    return ext_id, display
+            return None, None
+
+        # Build {table_name: [col_names]} from scan results
+        table_cols = {}
+        for h in column_hits:
+            s = h.get("summary") or {}
+            name = s.get("core.name", "")
+            loc  = s.get("core.location", "")
+            parts = loc.rstrip("/").split("/")
+            table = parts[-2] if len(parts) >= 2 else ""
+            if name and table:
+                table_cols.setdefault(table, []).append(name)
+
+        table_names = sorted(set((h.get("summary") or {}).get("core.name", "") for h in table_hits))
+
+        table_summary = []
+        for tname in table_names:
+            scanned_cols = sorted(table_cols.get(tname, []))
+            cols = []
+            for col in scanned_cols:
+                ext_id, term_name = find_term(col)
+                if ext_id:
+                    terms = [{"ext_id": ext_id, "name": term_name}]
+                    governed = True
+                else:
+                    terms = []
+                    governed = False
+                cols.append({"column": col, "table": tname,
+                             "terms": terms, "governed": governed})
+            cols.sort(key=lambda c: (not c["governed"], c["column"]))
+            governed_count = sum(1 for c in cols if c["governed"])
+            table_summary.append({
+                "table":            tname,
+                "total_columns":    len(cols),
+                "governed_columns": governed_count,
+                "pct":              round(governed_count / len(cols) * 100) if cols else 0,
+                "columns":          cols,
+            })
+
+        total_cols    = sum(t["total_columns"]    for t in table_summary)
+        governed_cols = sum(t["governed_columns"] for t in table_summary)
+        coverage_pct  = round(governed_cols / total_cols * 100) if total_cols else 0
+
+        return jsonify({
+            "tables":           len(table_hits),
+            "total_columns":    total_cols,
+            "governed_columns": governed_cols,
+            "coverage_pct":     coverage_pct,
+            "table_summary":    table_summary,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "tables": 0, "total_columns": 0,
+                        "governed_columns": 0, "coverage_pct": 0, "table_summary": []})
+
+
 @app.route("/api/debug_ai")
 def api_debug_ai():
     """Debug AI assets — try classType search and show raw hits + external IDs."""
@@ -1026,6 +1176,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="tab" onclick="showTab('policies')">Policies &amp; Regs <span class="tab-badge" id="badge-policies">—</span></div>
   <div class="tab" onclick="showTab('dq')">DQ Rules <span class="tab-badge" id="badge-dq">—</span></div>
   <div class="tab" onclick="showTab('ai')">AI Assets <span class="tab-badge" id="badge-ai">—</span></div>
+  <div class="tab" onclick="showTab('technical')">Technical Coverage <span class="tab-badge" id="badge-technical">—</span></div>
   <div class="tab" onclick="showTab('workflows')">Workflows</div>
   <div class="tab" onclick="showTab('apiexplorer')">API Explorer</div>
 </div>
@@ -1233,6 +1384,24 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <!-- ════════════════════════ WORKFLOWS ══════════════════════════ -->
+<div id="tab-technical" class="panel">
+  <div class="container">
+    <div class="toolbar">
+      <div style="color:#64748b;font-size:13px;">Scanned technical assets — columns linked to governed Business Terms</div>
+      <button class="btn" onclick="loadTechnical()">↻ Refresh</button>
+    </div>
+
+    <div id="tech-summary-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px">
+      <div class="count-card"><div class="val" id="tech-tables">—</div><div class="lbl">Scanned Tables</div></div>
+      <div class="count-card"><div class="val" id="tech-cols">—</div><div class="lbl">Total Columns</div></div>
+      <div class="count-card"><div class="val" id="tech-governed">—</div><div class="lbl">Governed Columns</div></div>
+      <div class="count-card"><div class="val" id="tech-pct" style="color:#38bdf8">—%</div><div class="lbl">Coverage</div></div>
+    </div>
+
+    <div id="tech-table-panels"></div>
+  </div>
+</div>
+
 <div id="tab-workflows" class="panel">
   <div class="container">
     <div class="toolbar" style="margin-bottom:20px">
@@ -1317,6 +1486,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/ai_assets','AI Systems and AI Models',[],'ai')">
         <span class="api-method method-get">GET</span><span class="api-path">/api/ai_assets</span>
       </div>
+      <div class="api-endpoint" onclick="selectEndpoint(this,'GET','/api/technical_coverage','Scanned tables and columns with Business Term glossary links',[],'technical')">
+        <span class="api-method method-get">GET</span><span class="api-path">/api/technical_coverage</span>
+      </div>
     </div>
 
     <!-- Main: request + response -->
@@ -1337,7 +1509,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
 // ── Tab navigation ────────────────────────────────────────────────────────────
-const tabLoaders = {overview: false, glossary: false, policies: false, dq: false, ai: false, workflows: true, apiexplorer: true};
+const tabLoaders = {overview: false, glossary: false, policies: false, dq: false, ai: false, technical: false, workflows: true, apiexplorer: true};
 
 function showTab(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -1348,7 +1520,7 @@ function showTab(name) {
   if (tabBtn) tabBtn.classList.add('active');
   if (!tabLoaders[name]) {
     tabLoaders[name] = true;
-    const loaders = {overview: loadOverview, glossary: loadGlossary, policies: loadPolicies, dq: loadDQ, ai: loadAI};
+    const loaders = {overview: loadOverview, glossary: loadGlossary, policies: loadPolicies, dq: loadDQ, ai: loadAI, technical: loadTechnical};
     loaders[name] && loaders[name]();
   }
 }
@@ -1673,6 +1845,77 @@ window.addEventListener('load', () => {
 });
 
 // ── Workflows ─────────────────────────────────────────────────────────────────
+// ── Technical Coverage ────────────────────────────────────────────────────────
+function loadTechnical() {
+  document.getElementById('tech-tables').textContent = '…';
+  document.getElementById('tech-cols').textContent = '…';
+  document.getElementById('tech-governed').textContent = '…';
+  document.getElementById('tech-pct').textContent = '…%';
+  document.getElementById('tech-table-panels').innerHTML =
+    '<div style="color:#64748b;padding:20px;text-align:center"><span class="spinner"></span> Fetching scanned assets and glossary links… (may take 15–30s)</div>';
+
+  fetch('/api/technical_coverage').then(r => r.json()).then(d => {
+    if (d.error) {
+      document.getElementById('tech-table-panels').innerHTML =
+        `<div style="color:#f87171;padding:20px">Error: ${esc(d.error)}</div>`;
+      return;
+    }
+    document.getElementById('tech-tables').textContent   = d.tables;
+    document.getElementById('tech-cols').textContent     = d.total_columns;
+    document.getElementById('tech-governed').textContent = d.governed_columns;
+    document.getElementById('tech-pct').textContent      = d.coverage_pct + '%';
+    document.getElementById('badge-technical').textContent = d.coverage_pct + '%';
+
+    let html = '';
+    for (const t of d.table_summary) {
+      const barPct = t.pct;
+      const barColor = barPct === 100 ? '#22c55e' : barPct >= 50 ? '#38bdf8' : '#f59e0b';
+      html += `<div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+          <span class="card-title" style="font-family:monospace;font-size:13px">${esc(t.table)}</span>
+          <span style="font-size:12px;color:#64748b">${t.governed_columns}/${t.total_columns} columns governed</span>
+          <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+            <div style="width:120px;height:6px;background:#1e293b;border-radius:3px;overflow:hidden">
+              <div style="width:${barPct}%;height:100%;background:${barColor};border-radius:3px;transition:width 0.4s"></div>
+            </div>
+            <span style="font-size:12px;color:${barColor};font-weight:600">${barPct}%</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Column</th>
+              <th>Business Term</th>
+              <th style="text-align:center">Status</th>
+            </tr></thead>
+            <tbody>`;
+      for (const c of t.columns) {
+        if (c.governed) {
+          const termLinks = c.terms.map(tm =>
+            `<span class="badge badge-green" style="margin:1px 2px">${esc(tm.name)}</span>`
+          ).join('');
+          html += `<tr>
+            <td style="font-family:monospace;font-size:11px;color:#38bdf8">${esc(c.column)}</td>
+            <td>${termLinks}</td>
+            <td style="text-align:center"><span class="badge badge-green">✓ Governed</span></td>
+          </tr>`;
+        } else {
+          html += `<tr>
+            <td style="font-family:monospace;font-size:11px;color:#94a3b8">${esc(c.column)}</td>
+            <td><span style="color:#475569;font-size:12px">—</span></td>
+            <td style="text-align:center"><span class="badge badge-slate">Ungoverned</span></td>
+          </tr>`;
+        }
+      }
+      html += `</tbody></table></div></div>`;
+    }
+    document.getElementById('tech-table-panels').innerHTML = html || '<div style="color:#64748b;padding:20px">No scanned tables found. Run an MCC scan first.</div>';
+  }).catch(e => {
+    document.getElementById('tech-table-panels').innerHTML =
+      `<div style="color:#f87171;padding:20px">Failed to load: ${esc(e.message)}</div>`;
+  });
+}
+
 const WF_LABELS = {
   governance_gap: 'Governance Gap Report',
   cde_risk:       'CDE Risk Assessment',
