@@ -5,9 +5,22 @@ import sys
 import json
 from pathlib import Path
 
+import argparse
+import glob
+
 LOGIN_URL  = "https://dmp-us.informaticacloud.com"
 ORG_URL    = "https://idmc-api.dmp-us.informaticacloud.com"
-IMPORT_DIR = Path.home() / "Downloads/CDGC_Import_RonkonkomaFinancial"
+
+def _resolve_import_dir(arg):
+    """Resolve import dir: use arg if given, else find newest CDGC_Import_* folder."""
+    if arg:
+        return Path(arg).expanduser()
+    candidates = sorted(
+        glob.glob(str(Path.home() / "Downloads/CDGC_Import_*")),
+        key=lambda p: Path(p).stat().st_mtime, reverse=True)
+    if candidates:
+        return Path(candidates[0])
+    return Path.home() / "Downloads"
 
 FILES_IN_ORDER = [
     "01_Domain.xlsx",
@@ -115,8 +128,14 @@ def poll_job(jwt_token, org_id, job_id, filename):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+parser = argparse.ArgumentParser(description="CDGC API Import")
+parser.add_argument("--dir", help="Import directory (default: newest ~/Downloads/CDGC_Import_* folder)")
+args = parser.parse_args()
+IMPORT_DIR = _resolve_import_dir(args.dir)
+
 print("\nCDGC API Import")
 print("───────────────────────────────────────────")
+print(f"Import dir: {IMPORT_DIR}")
 username = input("IDMC Username: ")
 password = getpass.getpass("IDMC Password: ")
 
