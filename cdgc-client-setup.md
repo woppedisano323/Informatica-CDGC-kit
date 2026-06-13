@@ -409,6 +409,14 @@ Import in this order — one file at a time:
   14_Relationships.xlsx       ← import last
 
 Wait for COMPLETED status before uploading the next file.
+
+Once all files are imported, launch the **CDGC Live Dashboard** to see everything live:
+
+```
+cd ~/Documents/CDGC && python3 cdgc_dashboard.py
+```
+
+You will be prompted for your IDMC username and password — use the same credentials you use to log into CDGC. Opens at http://localhost:8080 automatically once authenticated — live asset counts, Business Glossary, Policies, DQ Rules, AI Assets, Workflows, and API Explorer.
 ```
 
 ---
