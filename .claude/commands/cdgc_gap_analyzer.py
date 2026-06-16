@@ -21,7 +21,7 @@ Three-phase workflow to close the governance gap:
 
 Usage:
   python3 cdgc_gap_analyzer.py                                    # analyze
-  python3 cdgc_gap_analyzer.py --company "First Capital Bank"     # analyze, named output
+  python3 cdgc_gap_analyzer.py --company "Acme Corp" --prefix ACM # analyze, named output
   python3 cdgc_gap_analyzer.py --apply                            # phase 2
   python3 cdgc_gap_analyzer.py --link-new                         # phase 3
 """
@@ -52,26 +52,28 @@ SUBDOM_CLASS = "com.infa.ccgf.models.governance.Subdomain"
 
 CONFIDENCE_THRESHOLD = 70
 
-# Already-linked columns — skip in gap analysis
+# Already-linked columns — skip in gap analysis.
+# IDs below are FSI Financial Services reference examples only — superseded by cdgc_govern_technical.py
+# which resolves term IDs live from the org at runtime. Do not rely on these IDs.
 ALREADY_LINKED_MAP = {
-    "CUSTOMER_ID":            ("FCBBT-1",  "Customer ID"),
-    "SSN":                    ("FCBBT-2",  "Social Security Number"),
-    "DATE_OF_BIRTH":          ("FCBBT-3",  "Date of Birth"),
-    "EMAIL":                  ("FCBBT-4",  "Email Address"),
-    "PHONE_NUMBER":           ("FCBBT-5",  "Phone Number"),
-    "CREDIT_SCORE":           ("FCBBT-9",  "Credit Score"),
-    "TRANSACTION_ID":         ("FCBBT-12", "Transaction ID"),
-    "AMOUNT":                 ("FCBBT-13", "Transaction Amount"),
-    "TRANSACTION_DATE":       ("FCBBT-15", "Transaction Date"),
-    "POSTING_DATE":           ("FCBBT-16", "Post Date"),
-    "CURRENCY":               ("FCBBT-17", "Currency Code"),
-    "ACCOUNT_CODE":           ("FCBBT-22", "GL Account Number"),
-    "DEBIT_AMOUNT":           ("FCBBT-24", "Debit Amount"),
-    "CREDIT_AMOUNT":          ("FCBBT-25", "Credit Amount"),
-    "STATUS":                 ("FCBBT-26", "Entry Status"),
-    "FISCAL_PERIOD":          ("FCBBT-27", "Accounting Period"),
-    "PROBABILITY_OF_DEFAULT": ("FCBBT-30", "Probability of Default"),
-    "LOSS_GIVEN_DEFAULT":     ("FCBBT-31", "Loss Given Default"),
+    "CUSTOMER_ID":            ("",  "Customer ID"),
+    "SSN":                    ("",  "Social Security Number"),
+    "DATE_OF_BIRTH":          ("",  "Date of Birth"),
+    "EMAIL":                  ("",  "Email Address"),
+    "PHONE_NUMBER":           ("",  "Phone Number"),
+    "CREDIT_SCORE":           ("",  "Credit Score"),
+    "TRANSACTION_ID":         ("",  "Transaction ID"),
+    "AMOUNT":                 ("",  "Transaction Amount"),
+    "TRANSACTION_DATE":       ("",  "Transaction Date"),
+    "POSTING_DATE":           ("",  "Post Date"),
+    "CURRENCY":               ("",  "Currency Code"),
+    "ACCOUNT_CODE":           ("",  "GL Account Number"),
+    "DEBIT_AMOUNT":           ("",  "Debit Amount"),
+    "CREDIT_AMOUNT":          ("",  "Credit Amount"),
+    "STATUS":                 ("",  "Entry Status"),
+    "FISCAL_PERIOD":          ("",  "Accounting Period"),
+    "PROBABILITY_OF_DEFAULT": ("",  "Probability of Default"),
+    "LOSS_GIVEN_DEFAULT":     ("",  "Loss Given Default"),
 }
 
 # AI-drafted new Business Terms for ungoverned columns
@@ -123,6 +125,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--apply",    action="store_true", help="Phase 2: link Tab 1 approvals + generate import file")
 parser.add_argument("--link-new", action="store_true", help="Phase 3: link Tab 2 approvals after import")
 parser.add_argument("--company",  default="", help="Customer name for output filename")
+parser.add_argument("--prefix",   default="", help="Asset prefix, e.g. ACM → ACMBT-GAP-N")
 parser.add_argument("--out",      default="", help="Override output path")
 parser.add_argument("--email",    default="", help="Governance owner email for new terms")
 parser.add_argument("--yes",      action="store_true", help="Auto-approve all rows — skip workbook review")
@@ -455,7 +458,7 @@ if args.apply:
                 parent_ref  = f"{subdom_name} | {subdom_ext}" if subdom_ext else subdom_name
 
                 write_row(ws_imp, ws_imp.max_row + 1, [
-                    f"FCBBT-GAP-{i:03d}",   # Reference ID placeholder
+                    f"{args.prefix}BT-GAP-{i:03d}",   # Reference ID placeholder
                     name,                    # Name
                     row["term_desc"],        # Description
                     "",                      # Alias Names

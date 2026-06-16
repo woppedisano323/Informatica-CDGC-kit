@@ -3,24 +3,24 @@
 cdgc_govern_technical.py — Full technical governance pipeline
 
 Phases:
-  --phase 1   Link 18 known columns to their FCBBT- Business Terms
+  --phase 1   Link known columns to their Business Terms
   --phase 2a  Analyze gap → generate CDGC_Gap_Review.xlsx for human review
   --phase 2b  Apply workbook approvals → import new terms via API + link all approved columns
   --phase 3   Set Business Names → fresh export → Automatic Assignment=Enabled → reimport → verify
   --all       Run phases 1 + 2a, then pause for human review before 2b
 
 Flags:
-  --company   Customer name (e.g. "First Capital Bank")
-  --prefix    Asset prefix (default: FCB → new terms get FCBBT-N IDs)
+  --company   Customer name (required, e.g. "Acme Corp")
+  --prefix    Asset prefix (required, e.g. ACM → new terms get ACMBT-N IDs)
   --email     Governance owner email for new term imports
   --workbook  Override workbook path (default: ~/Downloads/CDGC_Gap_Review.xlsx)
 
 Usage:
-  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 1
-  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2a --company "First Capital Bank"
-  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2b --email you@example.com
+  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 1 --company "Acme Corp" --prefix ACM
+  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2a --company "Acme Corp" --prefix ACM
+  python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2b --email you@example.com --prefix ACM
   python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 3
-  python3 ~/Documents/CDGC/cdgc_govern_technical.py --all --company "First Capital Bank"
+  python3 ~/Documents/CDGC/cdgc_govern_technical.py --all --company "Acme Corp" --prefix ACM
 """
 import argparse
 import getpass
@@ -120,8 +120,8 @@ NEW_TERM_DRAFTS = {
 parser = argparse.ArgumentParser()
 parser.add_argument("--phase",    choices=["1","2a","2b","3"], help="Run a specific phase")
 parser.add_argument("--all",      action="store_true",         help="Run phases 1 + 2a, then pause for review")
-parser.add_argument("--company",  default="First Capital Bank",help="Customer name")
-parser.add_argument("--prefix",   default="FCB",               help="Asset prefix (e.g. FCB → FCBBT-N)")
+parser.add_argument("--company",  default="",                  help="Customer name (required)")
+parser.add_argument("--prefix",   default="",                  help="Asset prefix, e.g. ACM → ACMBT-N (required)")
 parser.add_argument("--email",    default="",                  help="Governance owner email for new terms")
 parser.add_argument("--workbook", default="",                  help="Override gap review workbook path")
 args = parser.parse_args()
@@ -129,6 +129,11 @@ args = parser.parse_args()
 if not args.phase and not args.all:
     parser.print_help()
     raise SystemExit(0)
+
+if not args.company or not args.prefix:
+    print("ERROR: --company and --prefix are required.")
+    print("  Example: python3 cdgc_govern_technical.py --all --company \"Acme Corp\" --prefix ACM")
+    raise SystemExit(1)
 
 slug     = args.company.strip().replace(" ", "_")
 WB_PATH  = Path(args.workbook) if args.workbook else Path.home() / "Downloads" / f"CDGC_Gap_Review_{slug}.xlsx"
@@ -558,7 +563,7 @@ FILE: {WB_PATH.name}
     • If not ready → leave APPROVE blank (row will be skipped)
 
   Approved rows will become NEW Business Terms in CDGC with
-  sequential FCBBT-N Reference IDs.
+  sequential <PREFIX>BT-N Reference IDs.
 
 ─── TAB 3: Already Governed ──────────────────────────────
   Reference only — these columns are already linked to
