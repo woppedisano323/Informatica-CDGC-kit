@@ -54,6 +54,20 @@ A Domain cannot be deleted while it has child Business Terms. Delete Business Te
 
 The script prompts for `CUSTOMER_PREFIX` at runtime so it works for any customer.
 
+### The wipe may need to be run multiple times
+
+The CDGC API is asynchronous — some deletions take time to fully propagate, particularly Business Terms with active column or DQ rule links. If the verification scan shows remaining assets, simply re-run the script. Each run will clear more assets as the async deletions complete. Two or three runs is normal after a heavily used environment.
+
+### Critical: MCC catalog source must be purged BEFORE running wipe
+
+If an MCC scan has been run, column→term links exist in CDGC. These links block Business Term deletion — terms with active column links cannot be deleted and will be stuck even after multiple retries.
+
+**Two steps required before running wipe — both are critical:**
+1. **Purge data** — in MCC, open the catalog source → Purge all ingested data. Wait for purge to complete.
+2. **Delete catalog source** — then delete the catalog source config entirely.
+
+Deleting the config WITHOUT purging does NOT remove ingested objects when Metadata change behaviour is set to Retain. Skipping purge = stuck Business Terms = failed wipe.
+
 ### Deletion order
 
 Order matters — dependency relationships block deletion if parents are deleted before children:

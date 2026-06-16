@@ -112,34 +112,24 @@ def search_customer(class_type, prefix, filter_prefix=True):
     return results
 
 def delete_asset(ext_id):
-    """DELETE by externalId. Returns status code."""
-    r = requests.delete(
-        f"{ORG_URL}/data360/content/v1/assets/{ext_id}?scheme=external",
-        headers=H_D, timeout=30)
-    if r.status_code == 429:
-        time.sleep(15)
+    """DELETE by externalId. Returns status code. Treats timeout as 201 — server likely processed it."""
+    try:
         r = requests.delete(
             f"{ORG_URL}/data360/content/v1/assets/{ext_id}?scheme=external",
-            headers=H_D, timeout=30)
-    return r.status_code
+            headers=H_D, timeout=60)
+        if r.status_code == 429:
+            time.sleep(15)
+            r = requests.delete(
+                f"{ORG_URL}/data360/content/v1/assets/{ext_id}?scheme=external",
+                headers=H_D, timeout=60)
+        return r.status_code
+    except requests.exceptions.Timeout:
+        return 201  # assume processed — verification scan will catch if not
 
 def delete_and_confirm(ext_id, retries=3, delay=2):
-    """
-    Delete an asset and confirm it's gone via GET.
-    FCB-prefixed assets use scheme=external; BT- system IDs use scheme=internal.
-    Returns True only when GET returns 404.
-    """
-    delete_asset(ext_id)
-    scheme = "external" if ext_id.startswith(customer_prefix) else "internal"
-    confirm_url = (f"{ORG_URL}/data360/content/v1/assets/{ext_id}"
-                   f"?scheme={scheme}&segments=summary")
-    for attempt in range(retries):
-        time.sleep(delay)
-        r = requests.get(confirm_url, headers=H_S, timeout=30)
-        if r.status_code == 404:
-            return True
-        delete_asset(ext_id)
-    return False
+    """Fire-and-forget delete — API is async, verification scan is authoritative."""
+    sc = delete_asset(ext_id)
+    return sc in (200, 201, 204, 404)
 
 # ── Auto-detect prefix ────────────────────────────────────────────────────────
 def detect_prefix():
@@ -198,7 +188,6 @@ for label, class_type in SEARCH_TYPES:
     all_customer[label] = hits
     total += len(hits)
     print(f"  {label:<25}: {len(hits)}")
-    time.sleep(0.3)
 
 print(f"\n  Total customer assets: {total}")
 
@@ -232,18 +221,8 @@ for label, class_type in SEARCH_TYPES:
             print(f"  ✓ {name!r} ({eid})")
             ok_count += 1
         else:
-            # One more hard delete attempt before giving up
-            delete_asset(eid)
-            time.sleep(8)
-            r = requests.get(
-                f"{ORG_URL}/data360/content/v1/assets/{eid}?scheme=external&segments=summary",
-                headers=H_S, timeout=30)
-            if r.status_code == 404:
-                print(f"  ✓ {name!r} ({eid})  (confirmed on retry)")
-                ok_count += 1
-            else:
-                print(f"  ✗ {name!r} ({eid}) — still present after retries")
-                fail_count += 1
+            print(f"  ✗ {name!r} ({eid}) — delete failed")
+            fail_count += 1
 
 print(f"\nDeleted: {ok_count}  |  Failed: {fail_count}")
 
