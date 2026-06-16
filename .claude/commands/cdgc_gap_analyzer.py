@@ -2,27 +2,33 @@
 """
 cdgc_gap_analyzer.py  —  Governance Gap Analyzer
 
-ANALYZE mode (default):
-  Fetches scanned columns + existing Business Terms, then produces a 3-tab
-  review workbook:
-    Tab 1 — Suggested Links     : ungoverned columns matched to EXISTING terms
-    Tab 2 — Suggested New Terms : ungoverned columns with no match — AI-drafted
-                                  term name, description, and domain for review
-    Tab 3 — Already Governed    : columns already linked (reference only)
+Three-phase workflow to close the governance gap:
 
-APPLY mode (--apply):
-  Reads the approved rows from both Tab 1 and Tab 2:
-    - Tab 1 APPROVE=YES  → PATCH column glossary link to existing term
-    - Tab 2 APPROVE=YES  → POST new Business Term, then PATCH column glossary link
+  PHASE 1 — Analyze (default)
+    Fetches scanned columns + existing Business Terms, produces a 3-tab review workbook:
+      Tab 1 — Suggested Links    : ungoverned columns matched to EXISTING terms
+      Tab 2 — Suggested New Terms: ungoverned columns with no match — AI-drafted definitions
+      Tab 3 — Already Governed   : reference only
+
+  PHASE 2 — Link existing terms (--apply)
+    Reads Tab 1 APPROVE=YES rows → PATCHes column glossary link to existing term.
+    Also generates 11_Business_Term_Gap.xlsx for CDGC bulk import (Tab 2 approved rows).
+    Import that file via CDGC UI before running Phase 3.
+
+  PHASE 3 — Link new terms (--link-new)
+    Reads Tab 2 APPROVE=YES rows → searches CDGC for each term by name →
+    PATCHes column glossary link. Run AFTER importing 11_Business_Term_Gap.xlsx.
 
 Usage:
-  python3 cdgc_gap_analyzer.py                           # analyze
-  python3 cdgc_gap_analyzer.py --apply                   # apply approvals
-  python3 cdgc_gap_analyzer.py --out ~/Desktop/gap.xlsx  # custom path
+  python3 cdgc_gap_analyzer.py                                    # analyze
+  python3 cdgc_gap_analyzer.py --company "First Capital Bank"     # analyze, named output
+  python3 cdgc_gap_analyzer.py --apply                            # phase 2
+  python3 cdgc_gap_analyzer.py --link-new                         # phase 3
 """
 import argparse
 import getpass
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -42,91 +48,95 @@ ORG_URL   = "https://idmc-api.dmp-us.informaticacloud.com"
 
 COLUMN_CLASS = "com.infa.odin.models.relational.Column"
 TERM_CLASS   = "com.infa.ccgf.models.governance.BusinessTerm"
+SUBDOM_CLASS = "com.infa.ccgf.models.governance.Subdomain"
 
-CONFIDENCE_THRESHOLD = 70  # minimum score for Tab 1 suggested links
+CONFIDENCE_THRESHOLD = 70
 
-# Domain ext_ids (RKF prefix in live org)
-DOMAINS = {
-    "Customer & KYC":    "RKFDOM-1",
-    "Transactions":      "RKFDOM-2",
-    "General Ledger":    "RKFDOM-3",
-    "Risk & Regulatory": "RKFDOM-4",
-    "Products":          "RKFDOM-5",
-}
-
-# Already-linked columns — skip entirely in gap analysis
+# Already-linked columns — skip in gap analysis
 ALREADY_LINKED_MAP = {
-    "CUSTOMER_ID":            ("RKFBT-1",  "Customer ID"),
-    "SSN":                    ("RKFBT-2",  "Social Security Number"),
-    "DATE_OF_BIRTH":          ("RKFBT-3",  "Date of Birth"),
-    "EMAIL":                  ("RKFBT-4",  "Email Address"),
-    "PHONE_NUMBER":           ("RKFBT-5",  "Phone Number"),
-    "CREDIT_SCORE":           ("RKFBT-9",  "Credit Score"),
-    "TRANSACTION_ID":         ("RKFBT-12", "Transaction ID"),
-    "AMOUNT":                 ("RKFBT-13", "Transaction Amount"),
-    "TRANSACTION_DATE":       ("RKFBT-15", "Transaction Date"),
-    "POSTING_DATE":           ("RKFBT-16", "Post Date"),
-    "CURRENCY":               ("RKFBT-17", "Currency Code"),
-    "ACCOUNT_CODE":           ("RKFBT-22", "GL Account Number"),
-    "DEBIT_AMOUNT":           ("RKFBT-24", "Debit Amount"),
-    "CREDIT_AMOUNT":          ("RKFBT-25", "Credit Amount"),
-    "STATUS":                 ("RKFBT-26", "Entry Status"),
-    "FISCAL_PERIOD":          ("RKFBT-27", "Accounting Period"),
-    "PROBABILITY_OF_DEFAULT": ("RKFBT-30", "Probability of Default"),
-    "LOSS_GIVEN_DEFAULT":     ("RKFBT-31", "Loss Given Default"),
+    "CUSTOMER_ID":            ("FCBBT-1",  "Customer ID"),
+    "SSN":                    ("FCBBT-2",  "Social Security Number"),
+    "DATE_OF_BIRTH":          ("FCBBT-3",  "Date of Birth"),
+    "EMAIL":                  ("FCBBT-4",  "Email Address"),
+    "PHONE_NUMBER":           ("FCBBT-5",  "Phone Number"),
+    "CREDIT_SCORE":           ("FCBBT-9",  "Credit Score"),
+    "TRANSACTION_ID":         ("FCBBT-12", "Transaction ID"),
+    "AMOUNT":                 ("FCBBT-13", "Transaction Amount"),
+    "TRANSACTION_DATE":       ("FCBBT-15", "Transaction Date"),
+    "POSTING_DATE":           ("FCBBT-16", "Post Date"),
+    "CURRENCY":               ("FCBBT-17", "Currency Code"),
+    "ACCOUNT_CODE":           ("FCBBT-22", "GL Account Number"),
+    "DEBIT_AMOUNT":           ("FCBBT-24", "Debit Amount"),
+    "CREDIT_AMOUNT":          ("FCBBT-25", "Credit Amount"),
+    "STATUS":                 ("FCBBT-26", "Entry Status"),
+    "FISCAL_PERIOD":          ("FCBBT-27", "Accounting Period"),
+    "PROBABILITY_OF_DEFAULT": ("FCBBT-30", "Probability of Default"),
+    "LOSS_GIVEN_DEFAULT":     ("FCBBT-31", "Loss Given Default"),
 }
 
 # AI-drafted new Business Terms for ungoverned columns
-# Format: column_name_upper → (term_name, description, domain)
 NEW_TERM_DRAFTS = {
     # CUSTOMER_MASTER
-    "FIRST_NAME":       ("First Name",          "Customer legal first name as provided at onboarding", "Customer & KYC"),
-    "LAST_NAME":        ("Last Name",            "Customer legal last name or family name", "Customer & KYC"),
-    "ADDRESS_LINE1":    ("Street Address",       "Primary street address line for the customer's residence or mailing address", "Customer & KYC"),
-    "CITY":             ("City",                 "City of residence or mailing address for the customer", "Customer & KYC"),
-    "STATE":            ("State",                "US state abbreviation for the customer's address", "Customer & KYC"),
-    "ZIP_CODE":         ("Zip Code",             "US postal zip code for the customer's address", "Customer & KYC"),
-    "ACCOUNT_STATUS":   ("Account Status",       "Current status of the customer account: ACTIVE, INACTIVE, SUSPENDED, or CLOSED", "Customer & KYC"),
-    "CUSTOMER_SINCE":   ("Customer Since Date",  "Date the customer relationship was first established with the institution", "Customer & KYC"),
-    "ANNUAL_INCOME":    ("Annual Income",        "Customer's declared annual income in USD, used for credit and risk assessment", "Customer & KYC"),
-    "RISK_TIER":        ("Customer Risk Tier",   "Internal risk classification tier assigned to the customer: LOW, MEDIUM, HIGH, VERY_HIGH", "Customer & KYC"),
+    "FIRST_NAME":        ("First Name",               "Customer legal first name as provided at onboarding",                          "Customer Identity",    "Customer & KYC"),
+    "LAST_NAME":         ("Last Name",                "Customer legal last name or family name",                                      "Customer Identity",    "Customer & KYC"),
+    "ADDRESS_LINE1":     ("Street Address",           "Primary street address line for the customer's residence or mailing address",  "Customer Identity",    "Customer & KYC"),
+    "CITY":              ("City",                     "City of residence or mailing address for the customer",                        "Customer Identity",    "Customer & KYC"),
+    "STATE":             ("State",                    "US state abbreviation for the customer's address",                             "Customer Identity",    "Customer & KYC"),
+    "ZIP_CODE":          ("Zip Code",                 "US postal zip code for the customer's address",                                "Customer Identity",    "Customer & KYC"),
+    "ACCOUNT_STATUS":    ("Account Status",           "Current status of the customer account: ACTIVE, INACTIVE, SUSPENDED, CLOSED", "Customer Identity",    "Customer & KYC"),
+    "CUSTOMER_SINCE":    ("Customer Since Date",      "Date the customer relationship was first established with the institution",    "Customer Identity",    "Customer & KYC"),
+    "ANNUAL_INCOME":     ("Annual Income",            "Customer's declared annual income in USD, used for credit and risk assessment","Customer Identity",    "Customer & KYC"),
+    "RISK_TIER":         ("Customer Risk Tier",       "Internal risk classification: LOW, MEDIUM, HIGH, VERY_HIGH",                  "KYC & Compliance",     "Customer & KYC"),
     # TRANSACTION_LEDGER
-    "ACCOUNT_ID":       ("Account ID",           "Unique identifier for the financial account associated with a transaction", "Transactions"),
-    "TRANSACTION_TYPE": ("Transaction Type",     "Classification of the transaction: DEBIT, CREDIT, TRANSFER, or FEE", "Transactions"),
-    "MERCHANT_NAME":    ("Merchant Name",        "Name of the merchant or payee for the transaction", "Transactions"),
-    "MERCHANT_CATEGORY":("Merchant Category",    "Merchant category classification used for spend analytics and reporting", "Transactions"),
-    "BALANCE_AFTER":    ("Balance After Transaction", "Account balance remaining immediately after a transaction is applied", "Transactions"),
-    "CHANNEL":          ("Transaction Channel",  "Channel through which the transaction was initiated: ONLINE, BRANCH, ATM, or MOBILE", "Transactions"),
-    "REFERENCE_NUMBER": ("Reference Number",     "External reference or confirmation number assigned to the transaction", "Transactions"),
+    "ACCOUNT_ID":        ("Account ID",               "Unique identifier for the financial account associated with a transaction",    "Payment Processing",   "Transactions"),
+    "TRANSACTION_TYPE":  ("Transaction Type",         "Classification of the transaction: DEBIT, CREDIT, TRANSFER, FEE",             "Payment Processing",   "Transactions"),
+    "MERCHANT_NAME":     ("Merchant Name",            "Name of the merchant or payee for the transaction",                           "Payment Processing",   "Transactions"),
+    "MERCHANT_CATEGORY": ("Merchant Category",        "Merchant category classification used for spend analytics and reporting",      "Payment Processing",   "Transactions"),
+    "BALANCE_AFTER":     ("Balance After Transaction","Account balance remaining immediately after a transaction is applied",         "Payment Processing",   "Transactions"),
+    "CHANNEL":           ("Transaction Channel",      "Channel through which the transaction was initiated: ONLINE, BRANCH, ATM, MOBILE", "Payment Processing","Transactions"),
+    "REFERENCE_NUMBER":  ("Reference Number",         "External reference or confirmation number assigned to the transaction",        "Payment Processing",   "Transactions"),
     # GL_ENTRY_REGISTER
-    "ENTRY_ID":         ("GL Entry ID",          "Unique identifier for a general ledger journal entry", "General Ledger"),
-    "JOURNAL_ID":       ("Journal ID",           "Identifier for the journal batch containing one or more GL entries", "General Ledger"),
-    "ENTRY_DATE":       ("Entry Date",           "Date on which the accounting entry was recorded", "General Ledger"),
-    "ACCOUNT_NAME":     ("Account Name",         "Descriptive name of the general ledger account from the chart of accounts", "General Ledger"),
-    "NET_AMOUNT":       ("Net Amount",           "Net monetary amount calculated as debit minus credit for a GL entry", "General Ledger"),
-    "COST_CENTER":      ("Cost Center",          "Business unit cost center code used for financial reporting and allocation", "General Ledger"),
-    "LEGAL_ENTITY":     ("Legal Entity",         "Legal entity associated with the journal entry for consolidation reporting", "General Ledger"),
-    "FISCAL_YEAR":      ("Fiscal Year",          "Fiscal year in which the journal entry is recorded", "General Ledger"),
-    "CREATED_BY":       ("Created By",           "User who created the journal entry in the financial system", "General Ledger"),
-    "APPROVED_BY":      ("Approved By",          "User who approved the journal entry before posting to the ledger", "General Ledger"),
+    "ENTRY_ID":          ("GL Entry ID",              "Unique identifier for a general ledger journal entry",                        "Accounting Entries",   "General Ledger"),
+    "JOURNAL_ID":        ("Journal ID",               "Identifier for the journal batch containing one or more GL entries",          "Accounting Entries",   "General Ledger"),
+    "ENTRY_DATE":        ("Entry Date",               "Date on which the accounting entry was recorded",                             "Accounting Entries",   "General Ledger"),
+    "ACCOUNT_NAME":      ("Account Name",             "Descriptive name of the general ledger account from the chart of accounts",   "Accounting Entries",   "General Ledger"),
+    "NET_AMOUNT":        ("Net Amount",               "Net monetary amount calculated as debit minus credit for a GL entry",         "Accounting Entries",   "General Ledger"),
+    "COST_CENTER":       ("Cost Center",              "Business unit cost center code used for financial reporting and allocation",   "Financial Close",      "General Ledger"),
+    "LEGAL_ENTITY":      ("Legal Entity Code",        "Legal entity associated with the journal entry for consolidation reporting",  "Financial Close",      "General Ledger"),
+    "FISCAL_YEAR":       ("Fiscal Year",              "Fiscal year in which the journal entry is recorded",                         "Financial Close",      "General Ledger"),
+    "CREATED_BY":        ("Created By",               "User who created the journal entry in the financial system",                  "Accounting Entries",   "General Ledger"),
+    "APPROVED_BY":       ("Approved By",              "User who approved the journal entry before posting to the ledger",            "Accounting Entries",   "General Ledger"),
     # RISK_EXPOSURE_DAILY
-    "RISK_ID":          ("Risk Assessment ID",   "Unique identifier for a risk exposure assessment record", "Risk & Regulatory"),
-    "ASSESSMENT_DATE":  ("Assessment Date",      "Date on which the risk exposure assessment was performed", "Risk & Regulatory"),
-    "RISK_CATEGORY":    ("Risk Category",        "Type of risk: CREDIT, MARKET, OPERATIONAL, LIQUIDITY, or REGULATORY", "Risk & Regulatory"),
-    "EXPOSURE_AMOUNT":  ("Exposure Amount",      "Total monetary exposure amount in USD for the risk assessment", "Risk & Regulatory"),
-    "EXPECTED_LOSS":    ("Expected Loss",        "Calculated expected loss: exposure amount × probability of default × loss given default", "Risk & Regulatory"),
-    "RISK_RATING":      ("Risk Rating",          "Internal credit risk rating assigned to the obligor: AAA through CCC", "Risk & Regulatory"),
-    "COLLATERAL_VALUE": ("Collateral Value",     "Estimated market value of collateral securing the exposure", "Risk & Regulatory"),
-    "REGULATORY_CAPITAL":("Regulatory Capital", "Required regulatory capital allocation for the exposure under Basel III rules", "Risk & Regulatory"),
-    "BASEL_CLASS":      ("Basel Asset Class",    "Basel III asset class classification for capital adequacy calculation", "Risk & Regulatory"),
+    "RISK_ID":           ("Risk Assessment ID",       "Unique identifier for a risk exposure assessment record",                     "Credit Risk",          "Risk & Regulatory"),
+    "ASSESSMENT_DATE":   ("Assessment Date",          "Date on which the risk exposure assessment was performed",                    "Credit Risk",          "Risk & Regulatory"),
+    "RISK_CATEGORY":     ("Risk Category",            "Type of risk: CREDIT, MARKET, OPERATIONAL, LIQUIDITY, REGULATORY",           "Credit Risk",          "Risk & Regulatory"),
+    "EXPOSURE_AMOUNT":   ("Exposure Amount",          "Total monetary exposure amount in USD for the risk assessment",               "Credit Risk",          "Risk & Regulatory"),
+    "EXPECTED_LOSS":     ("Expected Loss",            "Calculated expected loss: exposure × probability of default × loss given default", "Credit Risk",     "Risk & Regulatory"),
+    "RISK_RATING":       ("Risk Rating",              "Internal credit risk rating assigned to the obligor: AAA through CCC",        "Credit Risk",          "Risk & Regulatory"),
+    "COLLATERAL_VALUE":  ("Collateral Value",         "Estimated market value of collateral securing the exposure",                  "Credit Risk",          "Risk & Regulatory"),
+    "REGULATORY_CAPITAL":("Regulatory Capital",       "Required regulatory capital allocation under Basel III rules",                "Regulatory Reporting", "Risk & Regulatory"),
+    "BASEL_CLASS":       ("Basel Asset Class",        "Basel III asset class classification for capital adequacy calculation",       "Regulatory Reporting", "Risk & Regulatory"),
 }
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument("--apply", action="store_true")
-parser.add_argument("--out",   default="CDGC_Gap_Review.xlsx")
+parser.add_argument("--apply",    action="store_true", help="Phase 2: link Tab 1 approvals + generate import file")
+parser.add_argument("--link-new", action="store_true", help="Phase 3: link Tab 2 approvals after import")
+parser.add_argument("--company",  default="", help="Customer name for output filename")
+parser.add_argument("--out",      default="", help="Override output path")
+parser.add_argument("--email",    default="", help="Governance owner email for new terms")
+parser.add_argument("--yes",      action="store_true", help="Auto-approve all rows — skip workbook review")
 args = parser.parse_args()
-OUT_PATH = Path(args.out)
+
+if args.out:
+    OUT_PATH = Path(args.out)
+elif args.company:
+    slug = args.company.strip().replace(" ", "_")
+    OUT_PATH = Path.home() / "Downloads" / f"CDGC_Gap_Review_{slug}.xlsx"
+else:
+    OUT_PATH = Path.home() / "Downloads" / "CDGC_Gap_Review.xlsx"
+
+IMPORT_PATH = OUT_PATH.parent / "11_Business_Term_Gap.xlsx"
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 username = input("IDMC Username: ")
@@ -137,7 +147,6 @@ resp = requests.post(f"{LOGIN_URL}/identity-service/api/v1/Login",
 resp.raise_for_status()
 data = resp.json()
 session_id, org_id = data["sessionId"], data["orgId"]
-
 resp = requests.get(
     f"{LOGIN_URL}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234",
     headers={"IDS-SESSION-ID": session_id},
@@ -147,8 +156,8 @@ jwt = (resp.json().get("token") or resp.json().get("jwt_token")
        or resp.json().get("access_token"))
 print("✓ Authenticated\n")
 
-H = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": org_id,
-     "Content-Type": "application/json", "Accept": "application/json"}
+H  = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": org_id,
+      "Content-Type": "application/json", "Accept": "application/json"}
 
 # ── API helpers ───────────────────────────────────────────────────────────────
 def fetch_all(class_type):
@@ -178,16 +187,36 @@ def patch_glossary(col_int_id, bt_ext_id):
     return r.status_code, r.text
 
 
-def post_term(name, description, domain_ext_id):
-    """Create a new Business Term under the given domain."""
-    body = {
-        "core.classType": TERM_CLASS,
-        "summary": {"core.name": name, "core.description": description},
-        "parent": {"core.externalId": domain_ext_id},
-    }
-    r = requests.post(f"{ORG_URL}/data360/content/v1/assets",
-                      headers=H, json=body, timeout=30)
-    return r.status_code, r.json()
+def find_term_by_name(name):
+    """Find a customer-authored Business Term by exact name. Skips system BT- terms."""
+    r = requests.post(
+        f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery={requests.utils.quote(name)}&segments=summary",
+        headers=H,
+        json={"from": 0, "size": 10,
+              "filterSpec": [{"type": "simple", "attribute": "core.classType",
+                              "values": [TERM_CLASS]}]}, timeout=30)
+    if r.status_code != 200:
+        return None, None
+    for hit in r.json().get("hits", []):
+        s = hit.get("summary") or {}
+        hit_name = s.get("core.name", "")
+        ext_id   = hit.get("core.externalId") or s.get("core.externalId", "")
+        if hit_name.lower() == name.lower() and not ext_id.startswith("BT-"):
+            return ext_id, hit_name
+    return None, None
+
+
+def find_subdomains():
+    """Fetch all subdomains: name → ext_id."""
+    hits = fetch_all(SUBDOM_CLASS)
+    result = {}
+    for h in hits:
+        s = h.get("summary") or {}
+        ext_id = h.get("core.externalId") or s.get("core.externalId", "")
+        name   = s.get("core.name", "")
+        if ext_id and name:
+            result[name] = ext_id
+    return result
 
 # ── Fuzzy matcher ─────────────────────────────────────────────────────────────
 NOISE = {"of","the","a","an","and","or","for","in","on","at","to","is","as",
@@ -270,88 +299,208 @@ def inst_row(ws, text, ncols):
     ws.row_dimensions[2].height = 18
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# APPLY MODE
+# PHASE 3 — Link new terms after import (--link-new)
 # ══════════════════════════════════════════════════════════════════════════════
-if args.apply:
+if args.link_new:
     if not OUT_PATH.exists():
-        print(f"ERROR: {OUT_PATH} not found")
+        print(f"ERROR: {OUT_PATH} not found — run analyze first")
         raise SystemExit(1)
 
     wb  = load_workbook(OUT_PATH)
-    ok = fail = 0
+    if "Suggested New Terms" not in wb.sheetnames:
+        print("ERROR: 'Suggested New Terms' tab not found in workbook")
+        raise SystemExit(1)
 
-    # ── Tab 1: link existing terms ────────────────────────────────────────────
+    ws2  = wb["Suggested New Terms"]
+    hdrs = [c.value for c in ws2[1]]
+    idx  = {h: i for i, h in enumerate(hdrs)}
+    ok = fail = skip = 0
+
+    print("Phase 3 — Linking new terms after import...")
+    print("(Terms must already exist in CDGC from 11_Business_Term_Gap.xlsx import)\n")
+
+    for row in ws2.iter_rows(min_row=3, values_only=True):
+        approved = args.yes or str(row[idx.get("APPROVE", 0)] or "").strip().upper() == "YES"
+        if not approved:
+            skip += 1
+            continue
+        col_id    = row[idx["Column Internal ID"]]
+        col_name  = row[idx["Column Name"]]
+        table     = row[idx["Table"]]
+        term_name = row[idx["Business Term Name"]]
+
+        ext_id, found_name = find_term_by_name(term_name)
+        if not ext_id:
+            print(f"  ✗ {table}.{col_name} — term {term_name!r} not found in CDGC (imported yet?)")
+            fail += 1
+            time.sleep(0.2)
+            continue
+
+        status, body = patch_glossary(col_id, ext_id)
+        already = status == 500 and ext_id in body and "RELATIONSHIP_ALREADY_EXISTS" in body
+        if status in (200, 204) or already:
+            tag = " (already linked)" if already else ""
+            print(f"  ✓ {table}.{col_name} → {found_name} ({ext_id}){tag}")
+            ok += 1
+        else:
+            print(f"  ✗ {table}.{col_name} → {ext_id}  [{status}] {body[:100]}")
+            fail += 1
+        time.sleep(0.3)
+
+    print(f"\n{'─'*50}")
+    print(f"Done.  {ok} linked,  {fail} failed,  {skip} skipped (not approved).")
+    raise SystemExit(0)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Link existing terms + generate import file (--apply)
+# ══════════════════════════════════════════════════════════════════════════════
+if args.apply:
+    if not OUT_PATH.exists():
+        print(f"ERROR: {OUT_PATH} not found — run analyze first")
+        raise SystemExit(1)
+
+    wb  = load_workbook(OUT_PATH)
+    ok = fail = skip = 0
+
+    # ── Tab 1: PATCH columns to existing terms ────────────────────────────────
     if "Suggested Links" in wb.sheetnames:
-        ws1 = wb["Suggested Links"]
+        ws1  = wb["Suggested Links"]
         hdrs = [c.value for c in ws1[1]]
         idx  = {h: i for i, h in enumerate(hdrs)}
-        print("Applying Tab 1 — Suggested Links...")
+        print("Phase 2 — Linking Tab 1 (existing terms)...\n")
         for row in ws1.iter_rows(min_row=3, values_only=True):
-            if str(row[idx.get("APPROVE", 0)] or "").strip().upper() != "YES":
+            approved = args.yes or str(row[idx.get("APPROVE", 0)] or "").strip().upper() == "YES"
+            if not approved:
+                skip += 1
                 continue
             col_id   = row[idx["Column Internal ID"]]
             term_ext = row[idx["Term ext_id"]]
             col_name = row[idx["Column Name"]]
             table    = row[idx["Table"]]
             status, body = patch_glossary(col_id, term_ext)
-            already = status == 500 and term_ext in body
+            already = status == 500 and term_ext in body and "RELATIONSHIP_ALREADY_EXISTS" in body
             if status in (200, 204) or already:
-                tag = "(already)" if already else ""
-                print(f"  ✓ {table}.{col_name} → {term_ext} {tag}")
+                tag = " (already)" if already else ""
+                print(f"  ✓ {table}.{col_name} → {term_ext}{tag}")
                 ok += 1
             else:
                 print(f"  ✗ {table}.{col_name}  [{status}] {body[:80]}")
                 fail += 1
             time.sleep(0.3)
 
-    # ── Tab 2: create new terms then link ─────────────────────────────────────
+    print(f"\nTab 1 done: {ok} linked, {fail} failed, {skip} skipped\n")
+
+    # ── Tab 2: generate 11_Business_Term_Gap.xlsx for CDGC bulk import ────────
     if "Suggested New Terms" in wb.sheetnames:
-        ws2 = wb["Suggested New Terms"]
+        ws2  = wb["Suggested New Terms"]
         hdrs = [c.value for c in ws2[1]]
         idx  = {h: i for i, h in enumerate(hdrs)}
-        print("\nApplying Tab 2 — Suggested New Terms...")
+
+        approved_new = []
         for row in ws2.iter_rows(min_row=3, values_only=True):
-            if str(row[idx.get("APPROVE", 0)] or "").strip().upper() != "YES":
+            approved = args.yes or str(row[idx.get("APPROVE", 0)] or "").strip().upper() == "YES"
+            if not approved:
                 continue
-            col_id    = row[idx["Column Internal ID"]]
-            col_name  = row[idx["Column Name"]]
-            table     = row[idx["Table"]]
-            term_name = row[idx["Business Term Name"]]
-            term_desc = row[idx["Description"]]
-            domain    = row[idx["Domain"]]
-            dom_ext   = DOMAINS.get(domain, "RKFDOM-1")
+            approved_new.append({
+                "col_id":    row[idx["Column Internal ID"]],
+                "col_name":  row[idx["Column Name"]],
+                "table":     row[idx["Table"]],
+                "term_name": row[idx["Business Term Name"]],
+                "term_desc": row[idx["Description"]],
+                "subdomain": row[idx["Subdomain"]],
+                "domain":    row[idx["Domain"]],
+            })
 
-            # Create the Business Term
-            status, resp_data = post_term(term_name, term_desc, dom_ext)
-            if status in (200, 201):
-                new_ext = (resp_data.get("core.externalId", "")
-                           or resp_data.get("externalId", ""))
-                print(f"  ✓ Created term '{term_name}' ({new_ext})")
-                time.sleep(0.5)
-                # Link column to new term
-                if new_ext:
-                    s2, b2 = patch_glossary(col_id, new_ext)
-                    if s2 in (200, 204):
-                        print(f"    ✓ Linked {table}.{col_name} → {new_ext}")
-                        ok += 1
-                    else:
-                        print(f"    ✗ Link failed [{s2}] {b2[:80]}")
-                        fail += 1
-                else:
-                    print(f"    ⚠ Term created but no ext_id returned — link manually")
-                    fail += 1
-            else:
-                print(f"  ✗ Failed to create '{term_name}'  [{status}] {str(resp_data)[:80]}")
-                fail += 1
-            time.sleep(0.3)
+        if approved_new:
+            # Prompt for governance owner email if not supplied via --email
+            gov_email = args.email.strip()
+            if not gov_email:
+                gov_email = input("Governance owner email (for new term imports): ").strip()
 
-    print(f"\n{'─'*50}")
-    print(f"Done.  {ok} applied,  {fail} failed.")
+            # Fetch live subdomains to build ref_id lookup
+            print("\nFetching subdomains from CDGC...")
+            subdom_lookup = find_subdomains()
+            print(f"  {len(subdom_lookup)} subdomains found")
+
+            imp_wb = Workbook()
+            ws_imp = imp_wb.active
+            ws_imp.title = "Business Term"
+
+            IMP_COLS = [
+                ("Reference ID", 16), ("Name", 30), ("Description", 55),
+                ("Alias Names", 20), ("Business Logic", 20), ("Critical Data Element", 22),
+                ("Examples", 20), ("Format Type", 14), ("Format Description", 20),
+                ("Lifecycle", 14), ("Security Level", 16), ("Classifications", 20),
+                ("Reference Data", 20), ("Operation", 12),
+                ("Parent: Subdomain", 35), ("Parent: Business Term", 20),
+                ("Parent: Metric", 20), ("Parent: Domain", 20),
+                ("Stakeholder: Governance Owner", 35),
+                ("Stakeholder: Governance Administrator", 35),
+            ]
+            style_header(ws_imp, IMP_COLS)
+
+            # Deduplicate by term name — same column name in multiple tables = one term
+            seen_terms = {}
+            for row in approved_new:
+                name = row["term_name"]
+                if name not in seen_terms:
+                    seen_terms[name] = row
+
+            for i, (name, row) in enumerate(seen_terms.items(), 1):
+                subdom_name = row["subdomain"] or ""
+                subdom_ext  = subdom_lookup.get(subdom_name, "")
+                parent_ref  = f"{subdom_name} | {subdom_ext}" if subdom_ext else subdom_name
+
+                write_row(ws_imp, ws_imp.max_row + 1, [
+                    f"FCBBT-GAP-{i:03d}",   # Reference ID placeholder
+                    name,                    # Name
+                    row["term_desc"],        # Description
+                    "",                      # Alias Names
+                    "",                      # Business Logic
+                    "false",                 # Critical Data Element
+                    "",                      # Examples
+                    "Text",                  # Format Type
+                    "",                      # Format Description
+                    "Published",             # Lifecycle
+                    "Internal",              # Security Level
+                    "",                      # Classifications
+                    "",                      # Reference Data
+                    "Create",                # Operation
+                    parent_ref,              # Parent: Subdomain
+                    "",                      # Parent: Business Term
+                    "",                      # Parent: Metric
+                    "",                      # Parent: Domain
+                    gov_email,               # Stakeholder: Governance Owner
+                    gov_email,               # Stakeholder: Governance Administrator
+                ], fill=NEW_FILL)
+
+            imp_wb.save(IMPORT_PATH)
+            print(f"\n✓ Generated: {IMPORT_PATH}")
+            print(f"  {len(seen_terms)} new Business Terms ready for import")
+            subprocess.Popen(["open", str(IMPORT_PATH)])
+
+            print(f"""
+{'─'*60}
+Next steps:
+
+  1. Import {IMPORT_PATH.name} into CDGC:
+     CDGC UI → Gear icon → Import → Upload → select the file → Import
+     Wait for status: COMPLETED
+
+  2. After import completes, run Phase 3 to link columns:
+     python3 cdgc_gap_analyzer.py --link-new
+{'─'*60}""")
+        else:
+            print("No approved new terms in Tab 2 — nothing to generate.")
+
     raise SystemExit(0)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# ANALYZE MODE
+# PHASE 1 — Analyze (default)
 # ══════════════════════════════════════════════════════════════════════════════
 print("Fetching scanned columns...")
 col_hits = fetch_all(COLUMN_CLASS)
@@ -359,21 +508,30 @@ print(f"  {len(col_hits)} columns")
 
 print("Fetching Business Terms...")
 term_hits = fetch_all(TERM_CLASS)
-terms = [{"ext_id": h.get("core.externalId",""),
-          "name":   (h.get("summary") or {}).get("core.name",""),
-          "description": (h.get("summary") or {}).get("core.description","")}
-         for h in term_hits]
-print(f"  {len(terms)} terms\n")
+terms = []
+for h in term_hits:
+    s      = h.get("summary") or {}
+    ext_id = h.get("core.externalId") or s.get("core.externalId", "")
+    name   = s.get("core.name", "")
+    desc   = s.get("core.description", "")
+    # Skip system-generated Glossary Association terms
+    if ext_id and name and not ext_id.startswith("BT-"):
+        terms.append({"ext_id": ext_id, "name": name, "description": desc})
+print(f"  {len(terms)} terms (customer-authored)")
 
-# Build column records with table from location path
+print("Fetching Subdomains...")
+subdom_lookup = find_subdomains()
+print(f"  {len(subdom_lookup)} subdomains\n")
+
+# Build column records
 columns = []
 for h in col_hits:
-    s     = h.get("summary") or {}
-    name  = s.get("core.name","")
-    loc   = s.get("core.location","")
-    parts = loc.rstrip("/").split("/")
-    table = parts[-2] if len(parts) >= 2 else ""
-    int_id = h.get("core.identity","")
+    s      = h.get("summary") or {}
+    name   = s.get("core.name", "")
+    loc    = s.get("core.location", "")
+    parts  = loc.rstrip("/").split("/")
+    table  = parts[-2] if len(parts) >= 2 else ""
+    int_id = h.get("core.identity", "")
     columns.append({"name": name, "table": table, "id": int_id})
 
 # Categorize
@@ -392,12 +550,17 @@ for col in sorted(columns, key=lambda c: (c["table"], c["name"])):
         else:
             draft = NEW_TERM_DRAFTS.get(upper)
             if draft:
-                suggest_new.append({**col, "draft_name": draft[0],
-                                    "draft_desc": draft[1], "domain": draft[2]})
+                term_name, term_desc, subdomain, domain = draft
             else:
-                suggest_new.append({**col, "draft_name": col["name"].replace("_"," ").title(),
-                                    "draft_desc": f"[Edit description for {col['name']}]",
-                                    "domain": "Customer & KYC"})
+                term_name = col["name"].replace("_", " ").title()
+                term_desc = f"[Edit: description for {term_name}]"
+                subdomain = ""
+                domain    = "Customer & KYC"
+            suggest_new.append({**col,
+                                 "draft_name": term_name,
+                                 "draft_desc": term_desc,
+                                 "subdomain":  subdomain,
+                                 "domain":     domain})
 
 print(f"Results:")
 print(f"  Already governed : {len(linked_tab)}")
@@ -426,23 +589,23 @@ for row in suggest_link:
               fill=fill, approve_font=YES_FONT)
 
 if not suggest_link:
-    ws1.cell(ws1.max_row+1, 1, "No suggested links found — all ungoverned columns need new terms (see Tab 2)")
+    ws1.cell(ws1.max_row+1, 1, "No suggested links — all ungoverned columns need new terms (see Tab 2)")
 
 # ── Tab 2: Suggested New Terms ────────────────────────────────────────────────
 ws2 = wb.create_sheet("Suggested New Terms")
 ws2.freeze_panes = "A3"
 COLS2 = [("APPROVE",14),("Table",22),("Column Name",22),("Business Term Name",28),
-         ("Description",52),("Domain",22),("Column Internal ID",38)]
+         ("Description",52),("Subdomain",28),("Domain",22),("Column Internal ID",38)]
 style_header(ws2, COLS2)
-inst_row(ws2, "→ Edit Name/Description/Domain as needed, set APPROVE to YES, then run: python3 cdgc_gap_analyzer.py --apply", len(COLS2))
+inst_row(ws2, "→ Review/edit, set APPROVE=YES, then run: python3 cdgc_gap_analyzer.py --apply", len(COLS2))
 
 for row in suggest_new:
     write_row(ws2, ws2.max_row+1,
               ["", row["table"], row["name"], row["draft_name"],
-               row["draft_desc"], row["domain"], row["id"]],
+               row["draft_desc"], row["subdomain"], row["domain"], row["id"]],
               fill=NEW_FILL, approve_font=BLUE_FONT)
 
-# ── Tab 3: Already Governed ────────────────────────────────────────────────────
+# ── Tab 3: Already Governed ───────────────────────────────────────────────────
 ws3 = wb.create_sheet("Already Governed")
 ws3.freeze_panes = "A2"
 COLS3 = [("Table",22),("Column Name",22),("Business Term",28),("Term ext_id",14)]
@@ -454,9 +617,14 @@ for row in linked_tab:
 
 wb.save(OUT_PATH)
 print(f"✓ Written: {OUT_PATH}")
+subprocess.Popen(["open", str(OUT_PATH)])
 print()
 print("Next steps:")
-print(f"  1. Open {OUT_PATH.name}")
-print(f"  2. Tab 1 'Suggested Links'    — set APPROVE=YES to link to existing terms")
-print(f"  3. Tab 2 'Suggested New Terms'— edit descriptions, set APPROVE=YES to create + link")
-print(f"  4. Run: python3 cdgc_gap_analyzer.py --apply")
+print(f"  1. Review {OUT_PATH.name} (opening now)")
+print(f"  2. Tab 1 — set APPROVE=YES on suggested links to existing terms")
+print(f"  3. Tab 2 — review AI-drafted definitions, set APPROVE=YES, edit Subdomain/Domain")
+print(f"  4. Run Phase 2:  python3 cdgc_gap_analyzer.py --apply --company \"{args.company or 'Company Name'}\"")
+print(f"     This links Tab 1 columns and generates 11_Business_Term_Gap.xlsx for import")
+print(f"  5. Import 11_Business_Term_Gap.xlsx via CDGC UI")
+print(f"  6. Run Phase 3:  python3 cdgc_gap_analyzer.py --link-new")
+print(f"     This links Tab 2 columns to the newly imported terms")

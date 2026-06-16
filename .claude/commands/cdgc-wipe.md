@@ -1,5 +1,5 @@
 ---
-description: Wipe all governance assets from a CDGC org — Domains, Subdomains, Business Terms, Policies, Regulations, Systems, AI Systems, AI Models, Data Sets, Business Areas, Legal Entities, Geographies, DQ Rule Templates. Use before reloading a demo environment. Requires API credentials and customer prefix. Prompts for confirmation before deleting anything. Validated and tested end-to-end May 2026.
+description: Wipe all governance assets from a CDGC org — Domains, Subdomains, Business Terms, Policies, Regulations, Systems, AI Systems, AI Models, Data Sets, Business Areas, Legal Entities, Geographies, DQ Rule Templates. Use before reloading a demo environment. Requires API credentials and customer prefix. Prompts for confirmation before deleting anything. Validated and tested end-to-end June 2026.
 ---
 
 # CDGC Glossary Wipe
@@ -27,10 +27,21 @@ DELETE {ORG_URL}/data360/content/v1/assets/{externalId}?scheme=external
 ```
 
 - Use `core.externalId` (e.g., `RKFBT-3`, `RKFDOM-1`) — NOT `core.identity` (UUID)
-- Returns HTTP 201 + `{"messageCode":"Asset with id: [X] deleted"}` on success — **do NOT loop**; 201 means done
-- The API returns 201 on every call regardless of async state — looping causes each asset to be deleted 19+ extra times (wasted time, no harm). Single call is correct.
+- Returns HTTP 201 on success — confirmed gone only when subsequent GET returns 404
 - UUID-based delete (`DELETE /assets/{uuid}`) returns 404 — not supported for governance assets
 - 429 rate limit: sleep 15s and retry once
+
+### Critical: Business Terms use system-assigned BT- IDs, not customer prefix
+
+Business Terms imported from the 14 Excel files get **system-assigned BT- prefixed IDs** (e.g. BT-63, BT-72) — NOT the customer prefix (FCB). The wipe script must NOT filter Business Terms by customer prefix or they will be silently skipped, leaving them as children of the Domain which then cannot be deleted.
+
+- Business Terms: use `filter_prefix=False` — delete ALL found
+- All other types: filter to customer prefix only
+- Confirmation GET after DELETE must use `scheme=internal` for BT- IDs (not `scheme=external`) — wrong scheme returns 200 instead of 404 causing false "still present" errors
+
+### Domain deletion requires children gone first
+
+A Domain cannot be deleted while it has child Business Terms. Delete Business Terms first (they are first in SEARCH_TYPES order). If domain delete still fails, check the CDGC UI for any remaining child assets.
 
 ### AI Model / AI System — classType search broken on suborg
 

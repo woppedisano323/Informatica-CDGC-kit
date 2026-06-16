@@ -247,40 +247,40 @@ governed column count is higher than 18 unique names).
 
 ---
 
-## Step 6 — Gap analysis and close remaining coverage
+## Step 6 — Governance pipeline (link, gap analysis, Business Names)
 
-The gap analyzer identifies ungoverned columns, matches them to existing terms where
-possible, and drafts new Business Terms for everything else.
+Use the unified governance pipeline — replaces the old `cdgc_gap_analyzer.py` + `cdgc_set_business_names.py` scripts.
 
-**Analyze:**
+**Phase 1 + 2a — Link known columns and generate gap review workbook:**
 ```bash
-python3 ~/Documents/CDGC/cdgc_gap_analyzer.py
+python3 ~/Documents/CDGC/cdgc_govern_technical.py --all --company "Customer Name"
 ```
+- Links 18 known columns to their Business Terms (resolves term names live — no hardcoded IDs)
+- Generates `CDGC_Gap_Review_<Company>.xlsx` and opens it automatically
+- **Close any other Excel/Numbers apps before running** — macOS will append " 2" to the filename if the file is locked, causing Phase 2b to fail
 
-Opens `CDGC_Gap_Review.xlsx` with 3 tabs:
+**Human review:**
+- Tab 1 (Suggested Links): Set APPROVE=YES for correct fuzzy matches
+- Tab 2 (Suggested New Terms): Review AI-drafted terms, set APPROVE=YES
+- Tab 3 (Already Governed): Reference only — no action needed
+- Save and close the workbook
 
-| Tab | Content | Action |
-|---|---|---|
-| Suggested Links | Columns matched to existing terms | Set APPROVE=YES to accept |
-| Suggested New Terms | AI-drafted names, descriptions, domains | Edit if needed, set APPROVE=YES |
-| Already Governed | Reference — already linked columns | No action needed |
-
-**Human review step:**
-- Open the workbook
-- Tab 1: Verify suggested matches look correct — set APPROVE=YES
-- Tab 2: Review AI-drafted Business Term names and descriptions — edit if needed, set APPROVE=YES
-- Tab 2: Verify domain assignment for each new term is correct
-
-**Apply after review:**
+**Phase 2b — Apply approvals, create new terms, link columns:**
 ```bash
-python3 ~/Documents/CDGC/cdgc_gap_analyzer.py --apply
+python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2b --email your@email.com
 ```
+- Skips term creation for any terms already in CDGC (safe to re-run)
+- Resolves column UUIDs fresh from the live org — never uses stale workbook UUIDs
+- Links all approved columns to their terms via PATCH
 
-What `--apply` does:
-- Tab 1 YES rows: PATCHes column glossary link to existing term
-- Tab 2 YES rows: POSTs new Business Term to CDGC, then PATCHes column glossary link
+**Phase 3 — Propagate Business Names:**
+```bash
+python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 3
+```
+- Fresh export → sets Automatic Assignment=Enabled → reimports
+- Business Names visible in UI immediately; search API may lag 30-90s
 
-**After full approval:** 57/57 columns governed → 100% Technical Coverage.
+**After full run:** 57/57 columns governed, Business Names populated → 100% Technical Coverage.
 
 ---
 
