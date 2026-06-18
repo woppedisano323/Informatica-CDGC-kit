@@ -2,9 +2,11 @@
 """
 cdgc_wipe.py — Delete all customer governance assets from a CDGC org.
 
-Only deletes assets whose externalId starts with the customer prefix (e.g. FCB).
-BT- system terms created by MCC Glossary Association are intentionally ignored —
-they cannot be deleted via the content API and are harmless to the reimport.
+Deletes ALL assets of every governance class type regardless of prefix.
+The only assets intentionally skipped are BT- system terms created by MCC
+Glossary Association — they are system-managed and cannot be deleted via API.
+
+Safe to run on any org. No prefix knowledge required.
 
 Usage:
   python3 ~/Documents/CDGC/cdgc_wipe.py
@@ -41,9 +43,16 @@ print("""
 ║              ⚠  DESTRUCTIVE OPERATION — READ CAREFULLY           ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-This will permanently delete all customer governance assets.
+This will permanently delete ALL governance assets in the org.
 BT- system terms from MCC are skipped (cannot be deleted via API).
 There is NO undo.
+
+REQUIRED STEPS BEFORE RUNNING THIS SCRIPT:
+  1. MCC → open catalog source → Purge Data
+  2. MCC → delete the catalog source config
+  Skipping these leaves column→term links intact which block
+  Business Term deletion. Domains and Subdomains will also survive
+  because their children cannot be removed.
 """)
 
 username = input("IDMC Username: ")
@@ -62,7 +71,7 @@ resp = requests.get(
 resp.raise_for_status()
 jwt = (resp.json().get("token") or resp.json().get("jwt_token")
        or resp.json().get("access_token"))
-print("✓ Authenticated\n")
+print(f"✓ Authenticated — org: {org_id}\n")
 
 H_S = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": org_id,
        "Content-Type": "application/json"}
@@ -76,8 +85,8 @@ def ext_id_of(item):
 def name_of(item):
     return (item.get("summary") or {}).get("core.name", "?")
 
-def search_customer(class_type, prefix, filter_prefix=True):
-    """Fetch assets of class_type. If filter_prefix=False, return all regardless of prefix."""
+def search_all(class_type):
+    """Fetch all assets of class_type. Skips BT- system terms for Business Terms."""
     results, offset = [], 0
     while True:
         for _ in range(3):
@@ -103,8 +112,10 @@ def search_customer(class_type, prefix, filter_prefix=True):
             break
         for h in hits:
             eid = ext_id_of(h)
-            if not filter_prefix or eid.startswith(prefix):
-                results.append(h)
+            # Skip MCC-managed BT- system terms — cannot be deleted via API
+            if eid.startswith("BT-"):
+                continue
+            results.append(h)
         if len(hits) < 100:
             break
         offset += 100
@@ -112,7 +123,7 @@ def search_customer(class_type, prefix, filter_prefix=True):
     return results
 
 def delete_asset(ext_id):
-    """DELETE by externalId. Returns status code. Treats timeout as 201 — server likely processed it."""
+    """DELETE by externalId. Treats timeout as 201 — verification scan is authoritative."""
     try:
         r = requests.delete(
             f"{ORG_URL}/data360/content/v1/assets/{ext_id}?scheme=external",
@@ -124,88 +135,40 @@ def delete_asset(ext_id):
                 headers=H_D, timeout=60)
         return r.status_code
     except requests.exceptions.Timeout:
-        return 201  # assume processed — verification scan will catch if not
+        return 201  # assume processed
 
-def delete_and_confirm(ext_id, retries=3, delay=2):
-    """Fire-and-forget delete — API is async, verification scan is authoritative."""
+def delete_and_confirm(ext_id):
     sc = delete_asset(ext_id)
     return sc in (200, 201, 204, 404)
 
-# ── Auto-detect prefix ────────────────────────────────────────────────────────
-def detect_prefix():
-    r = requests.post(
-        f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=*&segments=summary",
-        headers=H_S,
-        json={"from": 0, "size": 1,
-              "filterSpec": [{"type": "simple", "attribute": "core.classType",
-                              "values": ["com.infa.ccgf.models.governance.Domain"]}]},
-        timeout=30)
-    if r.status_code != 200:
-        return None
-    hits = r.json().get("hits", [])
-    for h in hits:
-        eid = ext_id_of(h)
-        if "DOM" in eid:
-            return eid.split("DOM")[0]
-    return None
-
-customer_prefix = detect_prefix()
-if customer_prefix:
-    print(f"Auto-detected prefix: {customer_prefix}")
-    override = input(f"Press Enter to confirm or type a different prefix: ").strip().upper()
-    if override:
-        customer_prefix = override
-else:
-    customer_prefix = input("Could not auto-detect prefix — enter manually (e.g. RKF, FCB): ").strip().upper()
-print(f"Using prefix: {customer_prefix}\n")
-
 # ── Scan ──────────────────────────────────────────────────────────────────────
-print("Scanning org for customer assets...\n")
+print("Scanning org for assets to delete...\n")
 
-# AI Models/Systems: probe by sequential externalId (classType search broken on suborg)
-print("  Probing AI Models and AI Systems by externalId...")
-for suffix, label in [("AIM", "AI Model"), ("AIS", "AI System")]:
-    found = 0
-    for i in range(1, 201):
-        ext_id = f"{customer_prefix}{suffix}-{i}"
-        sc = delete_asset(ext_id)
-        if sc == 404:
-            break
-        if sc in (200, 201, 204):
-            found += 1
-        time.sleep(0.2)
-    print(f"  {label+'s':<25}: {found} deleted during probe")
-
-# Business Terms use system-assigned BT- prefix (not customer prefix) — fetch all
-NO_PREFIX_TYPES = {"Business Terms"}
-
-# All other types
-all_customer = {}
+all_assets = {}
 total = 0
 for label, class_type in SEARCH_TYPES:
-    use_prefix = label not in NO_PREFIX_TYPES
-    hits = search_customer(class_type, customer_prefix, filter_prefix=use_prefix)
-    all_customer[label] = hits
+    hits = search_all(class_type)
+    all_assets[label] = hits
     total += len(hits)
     print(f"  {label:<25}: {len(hits)}")
 
-print(f"\n  Total customer assets: {total}")
+print(f"\n  Total assets found: {total}")
 
 if total == 0:
     print("\n✓ Org is already clean — nothing to delete.")
     sys.exit(0)
 
-confirm = input(f"\n⚠ Permanently delete all {total} customer assets?\n  Type CONFIRM to proceed: ")
+confirm = input(f"\n⚠ Permanently delete all {total} assets?\n  Type CONFIRM to proceed: ")
 if confirm.strip() != "CONFIRM":
     print("Cancelled.")
     sys.exit(0)
 
-# ── Delete pass — with confirmation ──────────────────────────────────────────
+# ── Delete ────────────────────────────────────────────────────────────────────
 print()
 ok_count = fail_count = 0
 
 for label, class_type in SEARCH_TYPES:
-    hits = all_customer[label]
+    hits = all_assets[label]
     if not hits:
         continue
     print(f"{label} ({len(hits)}):")
@@ -226,14 +189,13 @@ for label, class_type in SEARCH_TYPES:
 
 print(f"\nDeleted: {ok_count}  |  Failed: {fail_count}")
 
-# ── Final verification — customer assets only ─────────────────────────────────
+# ── Verify ────────────────────────────────────────────────────────────────────
 print("\nVerifying...\n")
 time.sleep(5)
 
 remaining = 0
 for label, class_type in SEARCH_TYPES:
-    use_prefix = label not in NO_PREFIX_TYPES
-    hits = search_customer(class_type, customer_prefix, filter_prefix=use_prefix)
+    hits = search_all(class_type)
     if hits:
         remaining += len(hits)
         for h in hits:
@@ -241,10 +203,9 @@ for label, class_type in SEARCH_TYPES:
     else:
         print(f"  ✓ {label:<25}: 0")
 
-print(f"\n  Customer assets remaining: {remaining}")
+print(f"\n  Assets remaining: {remaining}")
 if remaining == 0:
     print("\n✓ Org is clean — ready for import.")
 else:
-    print(f"\n✗ {remaining} customer asset(s) remain.")
-    print("  Re-run the script or delete manually in the CDGC UI.")
-    print("  (BT- system terms from MCC are normal and excluded from this count.)")
+    print(f"\n✗ {remaining} asset(s) remain. Re-run the script to retry.")
+    print("  (BT- system terms from MCC are normal — they are excluded from this count.)")
