@@ -243,9 +243,17 @@ This makes it immediately obvious to a reviewer where attention is needed.
 
 #### AI System
 `Reference ID`, `Name`, `Description`, `AI System Type`, `Development Stage`, `Lifecycle`, `Operation`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
+- `AI System Type` valid values: `AI Application`, `AI Agent`, `Retrieval System`, `Conversational`
+- `Development Stage` valid values: `In Development`, `Validation`, `Production`
+- **Invalid values cause silent PARTIAL_COMPLETED** — do not use `Predictive Analytics`, `NLP`, or any other free-text value
 
 #### AI Model
 `Reference ID`, `Name`, `Description`, `AI Model Purpose`, `Architecture Type`, `Bias`, `Drift`, `Environment`, `Input`, `Libraries`, `Lifecycle`, `Model Format`, `Model Rules`, `Output`, `Source Model Repository`, `Operation`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
+- `Architecture Type` valid values: `Linear Regression`, `Logistic Regression`, `Lineage Discrimant Analysis`, `Decision Trees`, `K-Nearest Neighbors`, `Naive Bayes`, `Learning Vector Quantization`, `Support Vector Machines`, `Others`
+- `Model Format` valid values: `Docker`, `ONNX`, `Others`
+- `Environment` valid values: `Training`, `Validation`, `Production`
+- `Bias` and `Drift`: numeric 0–100 (e.g. `5`, `12`) — do NOT use strings like `"Monitored"` or `"Low"`
+- **Invalid enum values cause silent PARTIAL_COMPLETED** — use `Others` for Architecture Type when the actual type isn't listed
 
 #### Business Term
 `Reference ID`, `Name`, `Description`, `Alias Names`, `Business Logic`, `Critical Data Element`, `Examples`, `Format Type`, `Format Description`, `Lifecycle`, `Security Level`, `Classifications`, `Reference Data`, `Operation`, `Parent: Subdomain`, `Parent: Business Term`, `Parent: Metric`, `Parent: Domain`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
@@ -263,6 +271,22 @@ This makes it immediately obvious to a reviewer where attention is needed.
 #### Relationships
 `Source Asset`, `Source Asset Type`, `Target Asset`, `Target Asset Type`, `Relationship Type`, `Operation`
 - Do NOT include `System → Data Set` — auto-created by `Parent: System` in Data Set import
+- **Relationship Type values are strictly validated** — invalid types cause PARTIAL_COMPLETED with no row-level error
+
+| Source Asset Type | Target Asset Type | Valid Relationship Type |
+|---|---|---|
+| Policy | Business Term | `is Regulating` |
+| Policy | Domain | `is Regulating` |
+| Policy | AI Model | `is Regulating` |
+| Policy | AI System | `is Related to` ← NOT "is Regulating" |
+| Regulation | Policy | `is Related to` |
+| Domain | Subdomain | `is the Parent of` ← NOT "contains" |
+| AI System | AI Model | `is Related to` |
+| Data Set | Business Term | `is Defined by` |
+
+- Valid types: `is Related to`, `is Regulating`, `is the Parent of`, `is Defined by` — check the Annexure sheet in `CDGC_Template_All.xlsx` for the full list
+- **No valid type exists** for: Business Term → Regulation, Data Set → Regulation, DQ Rule → Business Term — remove these rows entirely
+- Spacing matters: `"is Related to"` (not `"isRelatedTo"`, not `"Is Related To"`)
 
 ---
 
