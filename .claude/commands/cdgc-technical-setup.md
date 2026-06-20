@@ -284,6 +284,104 @@ python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 3
 
 ---
 
+## Step 6b — DQ Rule Occurrences and score injection
+
+This step binds your DQ Rule Templates (imported in file 13) to physical columns in the
+catalog, then injects realistic scores so they are visible in CDGC.
+
+### Why 15_DQ_Rule_Occurrence.xlsx is not in the 14-file template
+
+The standard demo package contains 14 import files (01–14). DQ Rule Occurrences are
+intentionally excluded because the **Primary Data Element (PDE) path is environment-specific**:
+
+```
+FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/SSN
+```
+
+This path contains the MCC catalog source name and the exact DB/Schema/Table/Column path
+as scanned. These values only exist after your MCC scan and are unique to your org.
+A static template file cannot be prefix-swapped to produce valid PDE paths for a different
+environment — so the occurrence file is always generated at runtime, never copied from a template.
+
+### Prerequisites
+
+- Files 01–14 imported (including `13_DQ_Rule_Template.xlsx`)
+- MCC scan completed (Metadata Extraction must be done — columns must exist in the catalog)
+
+### Generate the occurrence file
+
+```bash
+python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
+```
+
+This script reads `13_DQ_Rule_Template.xlsx`, queries live CDGC for all scanned columns
+matching each rule's Input Port Name, and builds `15_DQ_Rule_Occurrence.xlsx` with the
+correct PDE path for each column.
+
+Expected output:
+```
+✓ Authenticated
+Found 35 DQ Rule Templates
+Matching columns in CDGC...
+  SSN Not Null → CUSTOMER_MASTER.SSN (FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/SSN)
+  ...
+74 occurrences written to 15_DQ_Rule_Occurrence.xlsx
+0 warnings
+```
+
+**If warnings appear:** The Input Port Name in the rule template doesn't match any scanned
+column name. Check the exact column name in Snowflake — Input Port Name must be an exact
+case-sensitive match to the physical column name.
+
+### Import the occurrence file
+
+Import `15_DQ_Rule_Occurrence.xlsx` via the standard bulk import UI (CDGC → gear icon →
+Import). Wait for **COMPLETED** status before proceeding.
+
+**If hard FAILED with empty detail:** This is a structural rejection. Causes:
+- Measuring Method value is not exact CamelCase (see constraints below)
+- Column structure mismatch — Input Port Name must be column 8 in the sheet (before Lifecycle)
+- `Submit Ticket` column does not exist in this template — do not add it
+
+### Inject DQ scores
+
+DQ Rule Occurrences using `TechnicalScript` as Measuring Method are not auto-scored by
+MCC's profiling engine. Inject scores manually via API:
+
+```bash
+python3 ~/Documents/CDGC/cdgc_dq_scores.py
+```
+
+Expected output:
+```
+✓ Authenticated
+DQ Score CSV — 74 occurrences
+...
+Status: 202
+Status: COMPLETED
+✓ DQ scores injected successfully.
+```
+
+Then in CDGC → Explore, open any DQ Rule Occurrence and check the **Data Quality** tab —
+scores should now be visible with pass rate, total rows, and failed row count.
+
+### Measuring Method — valid enum values
+
+The Measuring Method field in `13_DQ_Rule_Template.xlsx` must be one of these exact
+CamelCase strings (from CDGC_Template_All.xlsx data validation):
+
+| Value | When to use | Auto-scored by MCC? |
+|---|---|---|
+| `TechnicalScript` | External script executes the rule | ❌ — inject via API |
+| `BusinessExtract` | Scores come from a business-side extract | ❌ — inject via API |
+| `SystemFunction` | Scores come from a system-level function | ❌ — inject via API |
+| `InformaticaCloudDataQuality` | Rules built in ICDQ | ✅ — MCC auto-scores |
+
+**Do NOT use `InformaticaCloudDataQuality`** unless the Technical Rule Reference IDs from
+ICDQ are populated. The import will fail with a hard FAILED if that field is blank.
+
+---
+
 ## Step 7 — Launch dashboard and verify Technical Coverage
 
 ```bash
@@ -361,9 +459,11 @@ Not everything in this skill can be scripted — here's the current state:
 | Trigger scan | ⚠️ Maybe | Listed in Ch.9 but endpoint not published |
 | Poll scan status | ✅ Yes | GET `/data360/observable/v1/jobs/{jobId}` |
 | Link columns to terms | ✅ Yes | Validated — `cdgc_link_technical_assets.py` |
-| Gap analysis + new terms | ✅ Yes | Validated — `cdgc_gap_analyzer.py` |
+| Gap analysis + new terms | ✅ Yes | Validated — `cdgc_govern_technical.py` |
 | Import governance assets | ✅ Yes | Validated — bulk import API |
 | Link classifications to Business Terms | ✅ Yes | `cdgc_link_classifications.py` — run after promoting MCC classifications |
+| Generate DQ Rule Occurrences | ✅ Yes | `cdgc_create_dq_occurrences.py` — queries live catalog, generates file 15 |
+| Inject DQ scores | ✅ Yes | `cdgc_dq_scores.py` — POST `/data-quality/v1/rule-occurrences/runs` (deprecated April 2026, supported until July 2026) |
 
 **Future automation path:** The Informatica Developer Portal (`developer.informatica.com`)
 likely contains the catalog source creation endpoints. If access is obtained, Steps 2–3
@@ -389,6 +489,21 @@ This is not an error.
 **Technical Coverage API:** The search API `glossary` segment returns empty for technical
 assets — links cannot be detected via search. The dashboard uses the known COLUMN_TO_TERM
 map for accurate display.
+
+**Data Profiling and DQ scoring require a Dedicated Secure Agent.** The Hosted Agent
+(serverless) and Shared Secure Agent do not work for profiling — results never appear in
+CDGC. If no dedicated agent is available, disable Data Profiling and Data Quality in the
+MCC capabilities and use `cdgc_dq_scores.py` to inject scores via API after the scan.
+
+**Data Set → AI Model lineage cannot be bulk imported.** The relationship type
+`is in Direct Lineage with` between Business Data Sets and AI Models is listed in the
+Annexure but rejected by the bulk import validator with "No valid data to publish".
+This relationship only works for Technical Data Sets (from MCC scan). AI lineage must
+be established via MCC Lineage Discovery scanning views or stored procedures.
+
+**`InformaticaCloudDataQuality` Measuring Method requires ICDQ rule IDs.** Do not set
+this value unless Technical Rule Reference IDs from ICDQ are populated — the import will
+fail with a hard FAILED and no detail in the log.
 
 ---
 

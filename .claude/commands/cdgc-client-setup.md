@@ -258,6 +258,7 @@ This makes it immediately obvious to a reviewer where attention is needed.
 #### Business Term
 `Reference ID`, `Name`, `Description`, `Alias Names`, `Business Logic`, `Critical Data Element`, `Examples`, `Format Type`, `Format Description`, `Lifecycle`, `Security Level`, `Classifications`, `Reference Data`, `Operation`, `Parent: Subdomain`, `Parent: Business Term`, `Parent: Metric`, `Parent: Domain`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
 - **Single parent rule:** populate `Parent: Subdomain` only — leave `Parent: Domain`, `Parent: Business Term`, `Parent: Metric` blank
+- **MCC matching rule:** Every column in every scanned Snowflake/source table should have a corresponding Business Term whose name fuzzy-matches the column name. MCC Glossary Association automatically links columns to terms when the names are close enough (e.g. `ANNUAL_INCOME` → "Annual Income", `CREDIT_SCORE` → "Credit Score"). Columns with no matching term will appear as gaps in `cdgc_govern_technical.py --step 1` and require manual review. **Aim for near-complete term coverage of all scanned columns upfront** — a small deliberate gap (3–5 columns) is useful for demo purposes; a large gap means the Business Term list is incomplete.
 
 #### Data Set
 `Reference ID`, `Name`, `Description`, `Lifecycle`, `Operation`, `Parent: AI System`, `Parent: System`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
@@ -433,6 +434,12 @@ Import in this order — one file at a time:
   14_Relationships.xlsx       ← import last
 
 Wait for COMPLETED status before uploading the next file.
+
+**There is no file 15 in the template package.** DQ Rule Occurrences are generated after
+the MCC scan — their Primary Data Element paths contain the MCC catalog source name and
+exact DB/Schema/Table/Column, which only exist post-scan. Run
+`cdgc_create_dq_occurrences.py` after the MCC scan to generate and import the occurrence
+file. See `/cdgc-technical-setup` Step 6b for the full DQ sequence.
 
 Once all files are imported, launch the **CDGC Live Dashboard** to see everything live:
 
