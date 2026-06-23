@@ -273,12 +273,17 @@ python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 2b --email your@email.
 - Resolves column UUIDs fresh from the live org — never uses stale workbook UUIDs
 - Links all approved columns to their terms via PATCH
 
-**Phase 3 — Propagate Business Names:**
-```bash
-python3 ~/Documents/CDGC/cdgc_govern_technical.py --phase 3
-```
-- Fresh export → sets Automatic Assignment=Enabled → reimports
-- Business Names visible in UI immediately; search API may lag 30-90s
+**Phase 3 — Propagate Business Names (MCC UI — not scriptable):**
+
+After all column→term links are in place, re-run MCC Glossary Association to propagate Business Names:
+1. MCC → catalog source → Glossary Association task settings
+2. Set **Assign Business Names and Descriptions** → Yes
+3. Disable **Keep Existing Business Names and Descriptions**
+4. Re-execute the Glossary Association job
+
+Business Names will populate on all linked columns once the job completes.
+
+> **Note:** The API export→modify→reimport approach (Automatic Assignment = Enabled) hard FAILs on every attempt. MCC Glossary Association re-run is the only confirmed working method. Validated 2026-06-22.
 
 **After full run:** 57/57 columns governed, Business Names populated → 100% Technical Coverage.
 
