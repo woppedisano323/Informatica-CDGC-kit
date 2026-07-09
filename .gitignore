@@ -8,3 +8,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Live demo files — internal repo only, never in kit
+*[Ll]ive*.py
+*[Ll]ive*.md
+*-live.md
