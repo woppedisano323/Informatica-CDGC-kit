@@ -2,8 +2,11 @@
 """
 cdgc_create_dq_occurrences.py
 
-Reads 13_DQ_Rule_Template.xlsx, queries CDGC for every column whose name
-matches a rule's Input Port Name, and generates 15_DQ_Rule_Occurrence.xlsx.
+Reads 13_DQ_Rule_Template_PATCHED.xlsx, queries CDGC for every column whose
+name matches a rule's Input Port Name, and generates 15_DQ_Rule_Occurrence.xlsx.
+
+Operation=Create  — use when occurrences do not yet exist in CDGC (first run)
+Operation=Update  — use when occurrences already exist (re-run after changes)
 
 The Primary Data Element field format required by bulk import is:
   CatalogSourceName://DB/Schema/Table/ColumnName
@@ -11,13 +14,21 @@ The Primary Data Element field format required by bulk import is:
 We reconstruct this from core.location in the CDGC search API response.
 
 Usage:
-  python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
+  python3 cdgc_create_dq_occurrences.py              # defaults to Create
+  python3 cdgc_create_dq_occurrences.py --update     # sets Operation=Update
+  python3 cdgc_update_dq_occurrences.py              # wrapper for Update
 """
+import argparse
 import getpass
 import time
 from pathlib import Path
 
 import requests
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--update", action="store_true", help="Set Operation=Update instead of Create")
+args_parsed, _ = parser.parse_known_args()
+OPERATION = "Update" if args_parsed.update else "Create"
 
 try:
     from openpyxl import load_workbook, Workbook
@@ -32,7 +43,10 @@ COLUMN_CLASS = "com.infa.odin.models.relational.Column"
 
 IMPORT_DIR      = Path.home() / "Downloads/CDGC_Import_FirstCapitalBank"
 TEMPLATE_FILE   = IMPORT_DIR / "13_DQ_Rule_Template_PATCHED.xlsx"
-OCCURRENCE_FILE = IMPORT_DIR / "15_DQ_Rule_Occurrence.xlsx"
+OCCURRENCE_FILE = IMPORT_DIR / (
+    "15_DQ_Rule_Occurrence_UPDATE.xlsx" if OPERATION == "Update"
+    else "15_DQ_Rule_Occurrence.xlsx"
+)
 
 # Measuring method normalization — template uses CamelCase, import expects exact string
 METHOD_MAP = {
@@ -318,7 +332,7 @@ for occ in occurrences:
         "",                  # Failed Rows
         occ["pde"],          # Primary Data Element
         "",                  # Secondary Data Element
-        "Create",            # Operation
+        OPERATION,           # Operation — Create (first run) or Update (re-run)
         "",                  # Stakeholder: Governance Owner
         "",                  # Stakeholder: Governance Administrator
     ]

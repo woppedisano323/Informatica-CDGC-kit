@@ -25,19 +25,13 @@ print(f"✓ Authenticated\n")
 
 h = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": org_id}
 
-JOB_IDS = {
-    "System":   "5c3cc51c-b3cc-4b74-8e15-b1e95c9429b4",
-    "Data Set": "e4c5c22a-8bd8-4f23-9bd9-4c839081c06f",
-}
+job_id = input("Job ID: ").strip()
 
-for label, job_id in JOB_IDS.items():
-    print(f"── {label} job: {job_id} ──────────────────────────")
-    r = requests.get(f"{ORG_URL}/data360/observable/v1/jobs/{job_id}", headers=h, timeout=30)
-    print(json.dumps(r.json(), indent=2))
-    print()
+r = requests.get(f"{ORG_URL}/data360/observable/v1/jobs/{job_id}", headers=h, timeout=30)
+print(json.dumps(r.json(), indent=2))
 
-    # Also try the job errors/results endpoint
-    for suffix in ["/errors", "/results", "/summary"]:
-        r2 = requests.get(f"{ORG_URL}/data360/observable/v1/jobs/{job_id}{suffix}", headers=h, timeout=30)
-        if r2.status_code == 200:
-            print(f"  {suffix}: {json.dumps(r2.json(), indent=2)[:1000]}")
+for suffix in ["/errors", "/results", "/summary"]:
+    r2 = requests.get(f"{ORG_URL}/data360/observable/v1/jobs/{job_id}{suffix}", headers=h, timeout=30)
+    if r2.status_code == 200:
+        print(f"\n── {suffix} ──────────────────────────")
+        print(json.dumps(r2.json(), indent=2)[:2000])
