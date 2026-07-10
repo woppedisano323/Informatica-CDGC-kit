@@ -33,8 +33,8 @@ KNOWN_TYPES = [
     ("BusinessArea",  "com.infa.ccgf.models.governance.BusinessArea"),
     ("LegalEntity",   "com.infa.ccgf.models.governance.LegalEntity"),
     ("Geography",     "com.infa.ccgf.models.governance.Geography"),
-    ("AIModel",       "com.infa.ccgf.models.governance.AIModel"),
-    ("AISystem",      "com.infa.ccgf.models.governance.AISystem"),
+    ("AIModel",       "com.infa.ccgf.models.AIModel.AIModel"),
+    ("AISystem",      "com.infa.ccgf.models.AIModel.AISystem"),
 ]
 
 print(f"{'Asset Type':<20} {'API Count':>10}  ExternalIds")
@@ -56,3 +56,18 @@ for label, ct in KNOWN_TYPES:
     ids = [h2.get("core.externalId", "?") for h2 in hits]
     print(f"  {label:<20}: {total:>4}   {ids}")
     time.sleep(0.3)
+
+# ── Raw knowledgeQuery for DQ Rule Occurrences (no classType filter) ──────────
+print("\n" + "-" * 60)
+print("Searching for FCBDQO-* occurrences via knowledgeQuery...")
+r = requests.post(
+    f"{ORG_URL}/data360/search/v1/assets?knowledgeQuery=FCBDQO&segments=summary",
+    headers=h,
+    json={"from": 0, "size": 100},
+    timeout=30)
+hits = r.json().get("hits", [])
+total = r.json().get("total", len(hits))
+print(f"  Total found: {total}")
+for hit in hits[:5]:
+    s = hit.get("summary") or {}
+    print(f"  {s.get('core.externalId','?'):<16} classType: {s.get('core.classType','?')}")
