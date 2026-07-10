@@ -138,25 +138,49 @@ Wait for **COMPLETED**. All rules in CDGC now have ICDQ references.
 
 ---
 
-### Step 5 — Generate DQ Rule Occurrences
+### Step 5 — Generate DQ Rule Occurrences (File 15)
 
 ```bash
 python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
 ```
 
-Reads the patched template, queries CDGC for all scanned columns, matches each rule's
-Input Port Name to column names, writes `15_DQ_Rule_Occurrence.xlsx`.
+**What File 15 is:** `15_DQ_Rule_Occurrence.xlsx` is a programmatically generated file —
+not a template downloaded from the CDGC GUI. While the DQ Rule Occurrence sheet is a
+valid CDGC bulk import format (documented in *Bulk Import Assets*, Chapter 2, page 33),
+it cannot be filled in manually because the critical `Primary Data Element` field requires
+post-scan data:
 
-Each occurrence contains:
+```
+Primary Data Element (Required):
+  <Catalog Source Name>://<Database>/<Schema>/<Table>/<Column>
+  Example: FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/RISK_TIER
+```
+
+The Catalog Source Name is registered in MCC — not in any GUI template download. The
+exact DB/Schema/Table/Column paths only exist after the MCC scan has cataloged the
+Snowflake tables. `cdgc_create_dq_occurrences.py` queries the live CDGC catalog
+post-scan, resolves the Catalog Source Name from the UUID in `core.location`, and
+constructs each PDE path dynamically.
+
+**Column spec** (24 columns, matches official template exactly):
+`Reference ID, Name, Description, Criticality, Dimension, Exception File Path, Frequency,
+Input Port Name, Lifecycle, Measuring Method, Output Port Name, Scanned Time, Score,
+Technical Description, Technical Rule Reference, Target, Threshold, Total Rows, Failed Rows,
+Primary Data Element, Secondary Data Element, Operation, Stakeholder: Governance Owner,
+Stakeholder: Governance Administrator`
+
+**How it works:**
+- Reads `13_DQ_Rule_Template_PATCHED.xlsx` for rule definitions and ICDQ artifact IDs
+- Queries CDGC Search API for all scanned columns (`com.infa.odin.models.relational.Column`)
+- Matches each rule's `Input Port Name` to column names (case-insensitive)
+- For each match, constructs one occurrence row with the full PDE path
+- Writes `15_DQ_Rule_Occurrence.xlsx` — one row per rule/column combination
+
+Each occurrence row contains:
 - `Measuring Method` = `InformaticaCloudDataQuality`
 - `Output Port Name` = `Output`
 - `Technical Rule Reference` = ICDQ artifact ID
 - `Primary Data Element` = `<CatalogSourceName>://<DB>/<Schema>/<Table>/<Column>`
-
-**Primary Data Element format:**
-```
-FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/RISK_TIER
-```
 
 The Catalog Source Name is the name registered in MCC → Catalog Sources. It is NOT
 the Snowflake database name. Verify it before generating occurrences.
