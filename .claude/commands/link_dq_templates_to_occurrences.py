@@ -5,7 +5,7 @@ link_dq_templates_to_occurrences.py
 PURPOSE
 -------
 Creates the Rule Template → Rule Occurrence relationship for all 77 FCB Financial
-DQ rule pairs (FCBDQ-1..77 → FCBDQO-1..77) via the CDGC REST API.
+DQ rule occurrences (FCBDQO-*) via the CDGC REST API.
 
 BACKGROUND
 ----------
@@ -20,6 +20,17 @@ this link automatically. However, the 77 FCB occurrences were created via bulk i
 The Bulk Import template has no "Rule Template" column on the DQ Rule Occurrence sheet,
 and the Relationships Annexure has no RuleTemplate→RuleInstance entry, confirming
 there is no import-based mechanism for this relationship. It must be set via API.
+
+MAPPING APPROACH
+----------------
+The mapping is many-to-one: 40 templates cover 77 occurrences (some rules apply to
+multiple columns). The match is done by rule name:
+  - Occurrence name format: "<rule name> — <TABLE.COLUMN>"
+  - The part before " — " must exactly match a template name in File 13
+
+Files used:
+  - 13_DQ_Rule_Template_PATCHED.xlsx  — authoritative template reference IDs
+  - 15_DQ_Rule_Occurrence.xlsx        — all 77 occurrence reference IDs and names
 
 RELATIONSHIP TYPE
 -----------------
@@ -41,31 +52,76 @@ USAGE
 -----
   python3 link_dq_templates_to_occurrences.py
 
-  Prompts for IDMC username and password. No other arguments needed.
+  Prompts for IDMC username and password. Paths to File 13 and File 15 are
+  defined as constants at the top of the script — update if files are moved.
 
 BEHAVIOR
 --------
-  - For each pair FCBDQ-N / FCBDQO-N (N = 1..77):
-      1. Checks the template's neighborhood via GET segments=all
-      2. Skips the pair if the relatedRuleTemplateRuleInstance link already exists
-      3. Issues PATCH to create the link if missing
+  - Loads template and occurrence Excel files to build the name-based mapping
+  - For each of the 77 occurrences:
+      1. Resolves the matching template reference ID by rule name
+      2. Issues PATCH to create the relatedRuleTemplateRuleInstance link
+      3. Treats HTTP 409 (already linked) as a skip — safe to re-run
   - Reports linked / skipped / failed counts at the end
   - Lists any failed pairs with HTTP status and response for diagnosis
 
 NOTES
 -----
-  - FCBDQ-N and FCBDQO-N numbers are 1:1 (same N = same rule, same index)
-  - Safe to re-run: already-linked pairs are skipped, not duplicated
+  - Safe to re-run: 409 responses (already linked) are counted as skipped
   - After completion, verify with: python3 check_dq_links.py
   - Future: this step will be folded into cdgc_create_dq_occurrences.py as Phase 3
 """
-import getpass, time, requests, json
+import getpass, time, requests, openpyxl
 
-LOGIN_URL = "https://dmp-us.informaticacloud.com"
-ORG_URL   = "https://idmc-api.dmp-us.informaticacloud.com"
-
+LOGIN_URL  = "https://dmp-us.informaticacloud.com"
+ORG_URL    = "https://idmc-api.dmp-us.informaticacloud.com"
 ASSOC_TYPE = "com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance"
 
+TEMPLATE_FILE  = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/13_DQ_Rule_Template_PATCHED.xlsx"
+OCCURRENCE_FILE = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/15_DQ_Rule_Occurrence.xlsx"
+
+
+def load_col(ws, keyword):
+    hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    return next(i for i, h in enumerate(hdr) if h and keyword in str(h))
+
+
+def build_template_map():
+    """Returns {rule_name: template_ref_id} from File 13."""
+    wb = openpyxl.load_workbook(TEMPLATE_FILE)
+    ws = wb.active
+    ref_col  = load_col(ws, "Reference")
+    name_col = load_col(ws, "Name")
+    result = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        ref, name = row[ref_col], row[name_col]
+        if ref and name:
+            result[str(name).strip()] = str(ref).strip()
+    return result
+
+
+def build_occurrence_pairs(template_map):
+    """Returns list of (occ_ref, tpl_ref) tuples from File 15, matched by rule name."""
+    wb = openpyxl.load_workbook(OCCURRENCE_FILE)
+    ws = wb.active
+    ref_col  = load_col(ws, "Reference")
+    name_col = load_col(ws, "Name")
+    pairs = []
+    unmatched = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        oref, oname = row[ref_col], row[name_col]
+        if not oref or not oname:
+            continue
+        rule_name = str(oname).split(" — ")[0].strip()
+        tref = template_map.get(rule_name)
+        if tref:
+            pairs.append((str(oref).strip(), tref))
+        else:
+            unmatched.append((str(oref).strip(), rule_name))
+    return pairs, unmatched
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 username = input("IDMC Username: ").strip()
 password = getpass.getpass("IDMC Password: ")
 
@@ -79,87 +135,51 @@ jwt = r2.json().get("token") or r2.json().get("jwt_token")
 H = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": oid, "Content-Type": "application/json"}
 print("✓ Authenticated\n")
 
+# ── Build mapping ─────────────────────────────────────────────────────────────
+template_map = build_template_map()
+print(f"Templates loaded: {len(template_map)}")
 
-def get_neighborhood(ext_id):
-    r = requests.get(
-        f"{ORG_URL}/data360/search/v1/assets/{ext_id}?scheme=external&segments=all",
-        headers=H, timeout=30)
-    if r.status_code == 200:
-        return r.json().get("neighborhood", []) or []
-    return None
+pairs, unmatched = build_occurrence_pairs(template_map)
+print(f"Occurrence pairs resolved: {len(pairs)}")
 
+if unmatched:
+    print(f"\n⚠ Unmatched occurrences (no template found by name):")
+    for oref, rule_name in unmatched:
+        print(f"  {oref}  rule_name=\"{rule_name}\"")
+    print()
 
-def already_linked(template_id, occurrence_id):
-    neighborhood = get_neighborhood(template_id)
-    if neighborhood is None:
-        return False
-    for group in neighborhood:
-        grp_type = group.get("type", "")
-        if "RuleInstance" in grp_type:
-            for n in (group.get("neighbors", []) or []):
-                for path in (n.get("paths", []) or []):
-                    for col in (path.get("collection") or []):
-                        if col.get("association") == ASSOC_TYPE:
-                            to_val = col.get("to", "")
-                            if occurrence_id.split("-")[1] in to_val or occurrence_id in to_val:
-                                return True
-    return False
+# ── Main loop ─────────────────────────────────────────────────────────────────
+print(f"{'Occurrence':<14} {'Template':<12} {'Status':<12} Detail")
+print("-" * 70)
 
+linked  = 0
+skipped = 0
+failed  = 0
+errors  = []
 
-def create_link(template_ext_id, occurrence_ext_id):
-    """
-    PATCH /data360/content/v1/assets/{id}?scheme=external
-    Body: array with operation=add, segment=relationship, items with fromExternalIdentity/toExternalIdentity/association
-    (API Reference Chapter 4, Update assets, Create relationship example)
-    """
-    url = f"{ORG_URL}/data360/content/v1/assets/{template_ext_id}?scheme=external"
+for occ_id, tpl_id in pairs:
+    url  = f"{ORG_URL}/data360/content/v1/assets/{tpl_id}?scheme=external"
     body = [{
         "operation": "add",
         "segment": "relationship",
         "items": [{
-            "fromExternalIdentity": template_ext_id,
-            "toExternalIdentity": occurrence_ext_id,
+            "fromExternalIdentity": tpl_id,
+            "toExternalIdentity": occ_id,
             "association": ASSOC_TYPE
         }]
     }]
     r = requests.patch(url, headers=H, json=body, timeout=30)
-    return r.status_code, r.text
 
-
-# ── Main loop: FCBDQ-1 through FCBDQ-77 ──────────────────────────────────────
-print(f"Linking FCBDQ-N → FCBDQO-N for N=1..77\n")
-print(f"{'ID':<12} {'Status':<12} Detail")
-print("-" * 70)
-
-linked   = 0
-skipped  = 0
-failed   = 0
-errors   = []
-
-for n in range(1, 78):
-    tpl_id = f"FCBDQ-{n}"
-    occ_id = f"FCBDQO-{n}"
-
-    # Check if already linked
-    if already_linked(tpl_id, occ_id):
-        print(f"  {tpl_id:<10} SKIP         already linked")
-        skipped += 1
-        time.sleep(0.2)
-        continue
-
-    # Create the link
-    status_code, resp_text = create_link(tpl_id, occ_id)
-
-    if status_code in (200, 201, 204):
-        print(f"  {tpl_id:<10} ✓ LINKED")
+    if r.status_code in (200, 201, 204):
+        print(f"  {occ_id:<12} {tpl_id:<12} ✓ LINKED")
         linked += 1
-    elif status_code == 409:
-        print(f"  {tpl_id:<10} SKIP         already linked (409)")
+    elif r.status_code == 409:
+        print(f"  {occ_id:<12} {tpl_id:<12} SKIP         already linked")
         skipped += 1
     else:
-        print(f"  {tpl_id:<10} ✗ FAILED     HTTP {status_code}: {resp_text[:80]}")
+        print(f"  {occ_id:<12} {tpl_id:<12} ✗ FAILED     HTTP {r.status_code}: {r.text[:60]}")
         failed += 1
-        errors.append((tpl_id, occ_id, status_code, resp_text[:200]))
+        errors.append((tpl_id, occ_id, r.status_code, r.text[:200]))
 
     time.sleep(0.3)
 
@@ -170,7 +190,5 @@ if errors:
     print("\nFailed pairs:")
     for tpl, occ, code, txt in errors:
         print(f"  {tpl} → {occ}  HTTP {code}: {txt}")
-    print("\nIf all failed with 4xx, the association endpoint may need a different format.")
-    print("Run check_dq_links.py on a failed pair to confirm current state.")
 else:
-    print("\n✓ All pairs processed — run check_dq_links.py to verify FCBDQ-2/FCBDQO-2.")
+    print("\n✓ All pairs processed — run check_dq_links.py to verify.")
