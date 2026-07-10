@@ -248,6 +248,7 @@ Scores appear on the column Data Quality tab within minutes of scan completion.
 | No scores after MCC scan | Occurrence has wrong Measuring Method | Occurrence needs InformaticaCloudDataQuality + Technical Rule Reference |
 | "Rule Template" field blank on occurrence in UI | Template→occurrence link not set | Run link_dq_templates_to_occurrences.py (Step 7) — bulk import does not create this relationship |
 | link script shows HTTP 404 for FCBDQ-41+ | Template→occurrence mapping is not 1:1 | Script uses name-based matching — 40 templates cover 77 occurrences. Do not use numeric index matching. |
+| Template shows wrong occurrences in UI after linking | Numeric 1:1 script was run before name-based script — created 37 wrong links | Run `unlink_wrong_dq_template_links.py` to remove them, then re-run `link_dq_templates_to_occurrences.py` |
 | link script shows HTTP 409 (already linked) | Relationship already exists | Expected — script counts these as skipped, not failed. Safe to re-run. |
 | FRS API returns HTML redirect | Using JWT Bearer on FRS endpoint | Use IDS-SESSION-ID header for all FRS calls |
 | FRS_100 error | OData $filter not supported | Use navigation path: Projects → Folders → BaseEntities |
