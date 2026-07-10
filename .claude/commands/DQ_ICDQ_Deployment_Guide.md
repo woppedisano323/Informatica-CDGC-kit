@@ -280,7 +280,8 @@ SE workflow for a new engagement:
 | `cdgc_delete_dq_occurrences.py` | — | Deletes all FCBDQO-* occurrences via REST API — use before re-importing with Create |
 | `cdgc_update_dq_occurrences.py` | — | Generates occurrence file with Operation=Update — use when occurrences already exist |
 | `link_dq_templates_to_occurrences.py` | Step 7 | Links each FCBDQ-N → FCBDQO-N via PATCH API. Reads File 13 + File 15 to build name-based mapping. Sets `relatedRuleTemplateRuleInstance` relationship. Idempotent — safe to re-run. |
-| `check_dq_links.py` | Verify | Checks template↔occurrence neighborhood for a given FCBDQ-N. Use after Step 7 to confirm links were set. |
+| `audit_dq_links.py` | Verify | Audits all 40 templates at once — compares actual linked occurrences against File 15. Reports OK / MISSING / EXTRA per template. Run after Step 7 to confirm clean state. |
+| `check_dq_links.py` | Verify | Checks template↔occurrence neighborhood for a given FCBDQ-N. Use for spot-checking a single template. |
 | `count_dq_occurrences.py` | Verify | Counts all FCBDQO-* occurrences in CDGC. Use to confirm all 77 are present before running MCC scan. |
 | `cdgc_dq_scores.py` | Legacy | Synthetic score injection — superseded by real MCC execution. Do not use. |
 
