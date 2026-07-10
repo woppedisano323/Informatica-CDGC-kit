@@ -144,11 +144,32 @@ Wait for **COMPLETED**. All rules in CDGC now have ICDQ references.
 python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
 ```
 
-**What File 15 is:** `15_DQ_Rule_Occurrence.xlsx` is a programmatically generated file —
-not a template downloaded from the CDGC GUI. While the DQ Rule Occurrence sheet is a
-valid CDGC bulk import format (documented in *Bulk Import Assets*, Chapter 2, page 33),
-it cannot be filled in manually because the critical `Primary Data Element` field requires
-post-scan data:
+**What it accomplishes:**
+
+File 13 (DQ Rule Templates) defines *what* to measure — the rule logic, dimension, and
+ICDQ artifact. But CDGC has no way to know *where* to apply those rules without an
+occurrence record that maps each rule to a specific physical column.
+
+`cdgc_create_dq_occurrences.py` generates that mapping. It produces
+`15_DQ_Rule_Occurrence.xlsx` — one row per rule/column combination — where each row
+tells MCC:
+
+> "Run this ICDQ rule against this exact Snowflake column."
+
+Without File 15, MCC finds no occurrences to execute and no DQ scores are ever written.
+File 15 is the bridge between the governance layer (templates define the rules) and the
+technical catalog layer (scanned Snowflake columns are the targets). When MCC reads a
+completed occurrence, it knows both the ICDQ artifact to call and the exact column path
+to pass to it — the score it returns is written back to that column's Data Quality tab
+in CDGC.
+
+**Why the script is required — it cannot be filled in manually:**
+
+`15_DQ_Rule_Occurrence.xlsx` is a programmatically generated file — not a template
+downloaded from the CDGC GUI. While the DQ Rule Occurrence sheet is a valid CDGC bulk
+import format (documented in *Bulk Import Assets*, Chapter 2, page 33), it cannot be
+filled in manually because the critical `Primary Data Element` field requires post-scan
+data:
 
 ```
 Primary Data Element (Required):
