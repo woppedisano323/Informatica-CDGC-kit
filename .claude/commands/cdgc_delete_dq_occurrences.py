@@ -5,7 +5,8 @@ cdgc_delete_dq_occurrences.py
 Deletes DQ Rule Occurrences from CDGC by Reference ID via the REST API.
 Use this to clean up occurrences before re-importing with Operation=Create.
 
-Reads reference IDs from the occurrence file or uses a generated range.
+Reads reference IDs from the occurrence file if it exists; otherwise prompts
+for a prefix and count to generate them.
 
 Usage:
   python3 cdgc_delete_dq_occurrences.py
@@ -13,12 +14,33 @@ Usage:
 import getpass
 import time
 import requests
+from pathlib import Path
 
 LOGIN_URL = "https://dmp-us.informaticacloud.com"
 ORG_URL   = "https://idmc-api.dmp-us.informaticacloud.com"
 
-# Reference IDs to delete — matches what cdgc_create_dq_occurrences.py generates
-REF_IDS = [f"FCBDQO-{n}" for n in range(1, 78)]
+# ── Import directory and reference ID resolution ──────────────────────────────
+import_dir_raw = input("Import directory (e.g. ~/Downloads/CDGC_Import_MyClient): ").strip()
+IMPORT_DIR = Path(import_dir_raw).expanduser()
+OCC_FILE = IMPORT_DIR / "15_DQ_Rule_Occurrence.xlsx"
+
+REF_IDS = []
+if OCC_FILE.exists():
+    from openpyxl import load_workbook
+    wb = load_workbook(OCC_FILE)
+    ws = wb.active
+    hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    ref_col = next((i for i, h in enumerate(hdr) if h and "Reference" in str(h)), 0)
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        val = row[ref_col]
+        if val:
+            REF_IDS.append(str(val).strip())
+    print(f"Loaded {len(REF_IDS)} reference IDs from {OCC_FILE.name}")
+else:
+    occ_prefix = input("Occurrence prefix (e.g. DQOCC): ").strip()
+    occ_count  = int(input("Number of occurrences to delete: ").strip())
+    REF_IDS = [f"{occ_prefix}-{n}" for n in range(1, occ_count + 1)]
+    print(f"Generated {len(REF_IDS)} reference IDs from prefix")
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 username = input("IDMC Username: ").strip()
@@ -64,6 +86,5 @@ print(f"""
 {'═'*50}
 
 Next step — re-import clean:
-  python3 ~/Documents/CDGC/cdgc_import.py
-  → ~/Downloads/CDGC_Import_FirstCapitalBank/15_DQ_Rule_Occurrence.xlsx
+  Upload {OCC_FILE.name} using the bulk import tool or API.
 """)

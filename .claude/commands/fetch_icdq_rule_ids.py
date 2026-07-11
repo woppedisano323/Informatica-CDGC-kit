@@ -6,13 +6,13 @@ Fetches ICDQ rule IDs from the IDMC File Repository Service (FRS).
 The artifact ID = Technical Rule Reference value for 13_DQ_Rule_Template.xlsx.
 
 Confirmed from browser Network tab:
-  Host:  usw1.dmp-us.informaticacloud.com  (standard IDMC platform — JWT works)
+  Host:  <frs-host>.dmp-us.informaticacloud.com  (standard IDMC platform — JWT works)
   API:   /frs/api/v1/  (OData-style)
   Example: GET /frs/api/v1/GetPermission(artifactId='8aEIEW3YLAvdZaCF1opXmH')
 
 Usage:
-  python3 ~/Documents/CDGC/fetch_icdq_rule_ids.py
-  python3 ~/Documents/CDGC/fetch_icdq_rule_ids.py --csv
+  python3 fetch_icdq_rule_ids.py
+  python3 fetch_icdq_rule_ids.py --csv
 """
 import argparse
 import csv
@@ -21,7 +21,6 @@ import json
 import requests
 
 LOGIN_URL = "https://dmp-us.informaticacloud.com"
-FRS_BASE  = "https://usw1.dmp-us.informaticacloud.com/frs/api/v1"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--csv", action="store_true", help="Write results to icdq_rules.csv")
@@ -45,8 +44,11 @@ print("✓ Authenticated\n")
 
 H = {"IDS-SESSION-ID": sid, "Accept": "application/json"}
 
-PROJECT_NAME = "FCB_Financial_Demo"
-FOLDER_NAME  = "First Capital Bank"
+# ── Prompts ───────────────────────────────────────────────────────────────────
+frs_host     = input("FRS host (e.g. usw1.dmp-us.informaticacloud.com): ").strip()
+FRS_BASE     = f"https://{frs_host}/frs/api/v1"
+PROJECT_NAME = input("ICDQ project name: ").strip()
+FOLDER_NAME  = input("ICDQ folder name: ").strip()
 
 # ── Step 1: Find the project ──────────────────────────────────────────────────
 resp = requests.get(f"{FRS_BASE}/Projects", headers=H, timeout=15)

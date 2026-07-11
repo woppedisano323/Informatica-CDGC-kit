@@ -2,19 +2,20 @@
 """
 check_dq_links.py
 
-PURPOSE: Confirm whether a DQ Rule Template (FCBDQ-*) and its corresponding
-         DQ Rule Occurrence (FCBDQO-*) have a relationship link in CDGC.
+PURPOSE: Confirm whether a DQ Rule Template and its corresponding DQ Rule
+         Occurrence have a relationship link in CDGC.
 
 USAGE:
   python3 check_dq_links.py
   → Enter credentials when prompted
-  → Fetches FCBDQ-2 and FCBDQO-2 with segments=all
+  → Enter the template and occurrence reference IDs to check
+  → Fetches both assets with segments=all
   → Prints neighborhood relationships for both
   → Answer: do the two assets know about each other?
 
 WHEN TO USE:
   Before re-importing occurrences. Confirms whether template-to-occurrence
-  links are missing (expected state after reboot wipe) or already present.
+  links are missing (expected state after a wipe) or already present.
 
 DO NOT USE:
   After running this to diagnose — then decide whether to re-import.
@@ -98,5 +99,7 @@ def check_asset(ext_id):
     print()
 
 
-check_asset("FCBDQ-2")    # Template: SSN Format Validity
-check_asset("FCBDQO-2")   # Occurrence: SSN Format Validity — CUSTOMER_MASTER.SSN
+tpl_id = input("Template reference ID to check (e.g. DQ-2): ").strip()
+occ_id = input("Occurrence reference ID to check (e.g. DQO-2): ").strip()
+check_asset(tpl_id)
+check_asset(occ_id)

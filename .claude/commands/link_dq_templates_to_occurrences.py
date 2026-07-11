@@ -4,8 +4,8 @@ link_dq_templates_to_occurrences.py
 
 PURPOSE
 -------
-Creates the Rule Template → Rule Occurrence relationship for all 77 FCB Financial
-DQ rule occurrences (FCBDQO-*) via the CDGC REST API.
+Creates the Rule Template → Rule Occurrence relationship for all DQ rule
+occurrences via the CDGC REST API.
 
 BACKGROUND
 ----------
@@ -14,8 +14,8 @@ Template (RuleTemplate assets) so CDGC can display the "Rule Template" field on
 each occurrence and associate scoring results correctly.
 
 When CDGC automation is enabled on a template (Enable Automation = TRUE), it creates
-this link automatically. However, the 77 FCB occurrences were created via bulk import
-(File 15), which bypasses automation — so the link was never established.
+this link automatically. However, occurrences created via bulk import (File 15)
+bypass automation — so the link is never established.
 
 The Bulk Import template has no "Rule Template" column on the DQ Rule Occurrence sheet,
 and the Relationships Annexure has no RuleTemplate→RuleInstance entry, confirming
@@ -23,27 +23,27 @@ there is no import-based mechanism for this relationship. It must be set via API
 
 MAPPING APPROACH
 ----------------
-The mapping is many-to-one: 40 templates cover 77 occurrences (some rules apply to
+The mapping is many-to-one: templates cover occurrences (some rules apply to
 multiple columns). The match is done by rule name:
   - Occurrence name format: "<rule name> — <TABLE.COLUMN>"
   - The part before " — " must exactly match a template name in File 13
 
 Files used:
   - 13_DQ_Rule_Template_PATCHED.xlsx  — authoritative template reference IDs
-  - 15_DQ_Rule_Occurrence.xlsx        — all 77 occurrence reference IDs and names
+  - 15_DQ_Rule_Occurrence.xlsx        — all occurrence reference IDs and names
 
 RELATIONSHIP TYPE
 -----------------
   com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance
-  Direction: RuleTemplate (FCBDQ-N) ──→ RuleInstance (FCBDQO-N)
+  Direction: RuleTemplate ──→ RuleInstance
 
 API ENDPOINT
 ------------
   PATCH /data360/content/v1/assets/{templateExternalId}?scheme=external
   Body:
     [{"operation": "add", "segment": "relationship",
-      "items": [{"fromExternalIdentity": "FCBDQ-N",
-                 "toExternalIdentity": "FCBDQO-N",
+      "items": [{"fromExternalIdentity": "<template-ref>",
+                 "toExternalIdentity": "<occurrence-ref>",
                  "association": "<relationship type>"}]}]
   Reference: CDGC API Reference (April 2026), Chapter 4 — Manage assets,
              Update assets > Create relationship example (page 55)
@@ -52,13 +52,12 @@ USAGE
 -----
   python3 link_dq_templates_to_occurrences.py
 
-  Prompts for IDMC username and password. Paths to File 13 and File 15 are
-  defined as constants at the top of the script — update if files are moved.
+  Prompts for import directory and IDMC credentials.
 
 BEHAVIOR
 --------
   - Loads template and occurrence Excel files to build the name-based mapping
-  - For each of the 77 occurrences:
+  - For each occurrence:
       1. Resolves the matching template reference ID by rule name
       2. Issues PATCH to create the relatedRuleTemplateRuleInstance link
       3. Treats HTTP 409 (already linked) as a skip — safe to re-run
@@ -69,16 +68,19 @@ NOTES
 -----
   - Safe to re-run: 409 responses (already linked) are counted as skipped
   - After completion, verify with: python3 check_dq_links.py
-  - Future: this step will be folded into cdgc_create_dq_occurrences.py as Phase 3
 """
 import getpass, time, requests, openpyxl
+from pathlib import Path
 
 LOGIN_URL  = "https://dmp-us.informaticacloud.com"
 ORG_URL    = "https://idmc-api.dmp-us.informaticacloud.com"
 ASSOC_TYPE = "com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance"
 
-TEMPLATE_FILE  = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/13_DQ_Rule_Template_PATCHED.xlsx"
-OCCURRENCE_FILE = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/15_DQ_Rule_Occurrence.xlsx"
+# ── Import directory ──────────────────────────────────────────────────────────
+import_dir_raw = input("Import directory (e.g. ~/Downloads/CDGC_Import_MyClient): ").strip()
+IMPORT_DIR = Path(import_dir_raw).expanduser()
+TEMPLATE_FILE   = IMPORT_DIR / "13_DQ_Rule_Template_PATCHED.xlsx"
+OCCURRENCE_FILE = IMPORT_DIR / "15_DQ_Rule_Occurrence.xlsx"
 
 
 def load_col(ws, keyword):

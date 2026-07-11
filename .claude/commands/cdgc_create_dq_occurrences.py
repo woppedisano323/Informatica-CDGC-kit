@@ -41,7 +41,11 @@ LOGIN_URL    = "https://dmp-us.informaticacloud.com"
 ORG_URL      = "https://idmc-api.dmp-us.informaticacloud.com"
 COLUMN_CLASS = "com.infa.odin.models.relational.Column"
 
-IMPORT_DIR      = Path.home() / "Downloads/CDGC_Import_FirstCapitalBank"
+# ── Import directory and occurrence prefix ────────────────────────────────────
+import_dir_raw = input("Import directory (e.g. ~/Downloads/CDGC_Import_MyClient): ").strip()
+IMPORT_DIR = Path(import_dir_raw).expanduser()
+OCC_PREFIX = input("Occurrence reference ID prefix (e.g. DQOCC): ").strip()
+
 TEMPLATE_FILE   = IMPORT_DIR / "13_DQ_Rule_Template_PATCHED.xlsx"
 OCCURRENCE_FILE = IMPORT_DIR / (
     "15_DQ_Rule_Occurrence_UPDATE.xlsx" if OPERATION == "Update"
@@ -185,8 +189,7 @@ def build_pde(loc: str, catalog_name: str) -> str:
     return f"{catalog_name}://{path}"
 
 # ── Resolve catalog source name from the UUID in the first location sample ────
-catalog_uuid = ""
-catalog_name = "FCB_Financial_Snowflake"  # fallback
+catalog_name = ""
 if all_cols:
     first_loc = all_cols[0]["loc"]
     if "://" in first_loc:
@@ -195,7 +198,10 @@ if all_cols:
         resolved = get_catalog_source_name(catalog_uuid)
         if resolved and resolved != catalog_uuid:
             catalog_name = resolved
-        print(f"  → Catalog source name: {catalog_name}")
+            print(f"  → Catalog source name: {catalog_name}")
+        else:
+            catalog_name = input("  Could not resolve catalog source name. Enter it manually (from MCC → Catalog Sources): ").strip()
+            print(f"  → Using: {catalog_name}")
 
 # ── Index columns by name → list of (pde, table) ─────────────────────────────
 col_by_name: dict[str, list[dict]] = {}
@@ -233,7 +239,7 @@ for rule in rules:
     print(f"  {rule['ref_id']} ({rule['input_port']}): {len(matches)} column(s)")
     for m in matches:
         occ_name = f"{rule['name']} — {m['table']}.{rule['input_port']}"
-        occ_ref  = f"FCBDQO-{occ_counter}"
+        occ_ref  = f"{OCC_PREFIX}-{occ_counter}"
         occ_counter += 1
         occurrences.append({
             "ref_id":     occ_ref,
@@ -362,12 +368,10 @@ NEXT STEPS
    Check that the Primary Data Element paths look correct:
      CatalogSourceName://DB/Schema/Table/Column
 
-2. Import into CDGC:
-   python3 ~/Documents/CDGC/cdgc_import_single.py
-   → Enter path: {OCCURRENCE_FILE}
+2. Import into CDGC using the bulk import tool or API.
+   Upload: {OCCURRENCE_FILE.name}
 
 3. After import completes (COMPLETED), run another MCC scan.
    The DQ scores will now appear on the matched columns.
-   SSN column → Data Quality tab should show FCBDQ-1 and FCBDQ-2.
 {'═'*60}
 """)

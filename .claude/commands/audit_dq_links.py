@@ -4,7 +4,7 @@ audit_dq_links.py
 
 PURPOSE
 -------
-Audits all 40 DQ Rule Templates — verifies that each template has the
+Audits all DQ Rule Templates — verifies that each template has the
 correct occurrences linked in CDGC and reports mismatches.
 
 For each template:
@@ -16,15 +16,21 @@ For each template:
 USAGE
 -----
   python3 audit_dq_links.py
+
+  Prompts for import directory and IDMC credentials.
 """
 import getpass, time, requests, openpyxl
+from pathlib import Path
 
 LOGIN_URL  = "https://dmp-us.informaticacloud.com"
 ORG_URL    = "https://idmc-api.dmp-us.informaticacloud.com"
 ASSOC_TYPE = "com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance"
 
-TEMPLATE_FILE   = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/13_DQ_Rule_Template_PATCHED.xlsx"
-OCCURRENCE_FILE = "/Users/woppedisano/Downloads/CDGC_Import_FirstCapitalBank/15_DQ_Rule_Occurrence.xlsx"
+# ── Import directory ──────────────────────────────────────────────────────────
+import_dir_raw = input("Import directory (e.g. ~/Downloads/CDGC_Import_MyClient): ").strip()
+IMPORT_DIR = Path(import_dir_raw).expanduser()
+TEMPLATE_FILE   = IMPORT_DIR / "13_DQ_Rule_Template_PATCHED.xlsx"
+OCCURRENCE_FILE = IMPORT_DIR / "15_DQ_Rule_Occurrence.xlsx"
 
 
 def load_col(ws, keyword):
