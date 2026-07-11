@@ -289,12 +289,32 @@ Business Names will populate on all linked columns once the job completes.
 
 ---
 
-## Step 6b — DQ Rule Occurrences and score injection
+## Step 6b — DQ Rule Occurrences
 
 This step binds your DQ Rule Templates (imported in file 13) to physical columns in the
-catalog, then injects realistic scores so they are visible in CDGC.
+catalog so that DQ scores are visible in CDGC. There are two paths depending on whether
+ICDQ is enabled in your org:
 
-### Why 15_DQ_Rule_Occurrence.xlsx is not in the 14-file template
+| Path | When | Scores |
+|------|------|--------|
+| **ICDQ path** (recommended) | ICDQ enabled + MCC Data Quality capability | Real — ICDQ executes rules against live Snowflake data |
+| **Score injection path** | No ICDQ, or demo/presentation only | Synthetic — injected via API |
+
+**Run the dedicated skill for the full ICDQ path:**
+```
+/cdgc-dq-setup
+```
+This runs the complete 8-step sequence: fetch ICDQ rule IDs → patch template → import →
+generate occurrences → import occurrences → link templates → MCC scan → verify.
+The DQ deployment guide (`DQ_ICDQ_Deployment_Guide.md`) has full technical reference.
+
+---
+
+### Score injection path (no ICDQ)
+
+Use when ICDQ is not available and you need DQ scores in the UI for a presentation.
+
+#### Why 15_DQ_Rule_Occurrence.xlsx is not in the 14-file template
 
 The standard demo package contains 14 import files (01–14). DQ Rule Occurrences are
 intentionally excluded because the **Primary Data Element (PDE) path is environment-specific**:
@@ -308,12 +328,12 @@ as scanned. These values only exist after your MCC scan and are unique to your o
 A static template file cannot be prefix-swapped to produce valid PDE paths for a different
 environment — so the occurrence file is always generated at runtime, never copied from a template.
 
-### Prerequisites
+#### Prerequisites
 
 - Files 01–14 imported (including `13_DQ_Rule_Template.xlsx`)
 - MCC scan completed (Metadata Extraction must be done — columns must exist in the catalog)
 
-### Generate the occurrence file
+#### Generate the occurrence file
 
 ```bash
 python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
@@ -338,7 +358,7 @@ Matching columns in CDGC...
 column name. Check the exact column name in Snowflake — Input Port Name must be an exact
 case-sensitive match to the physical column name.
 
-### Import the occurrence file
+#### Import the occurrence file
 
 Import `15_DQ_Rule_Occurrence.xlsx` via the standard bulk import UI (CDGC → gear icon →
 Import). Wait for **COMPLETED** status before proceeding.
@@ -348,7 +368,7 @@ Import). Wait for **COMPLETED** status before proceeding.
 - Column structure mismatch — Input Port Name must be column 8 in the sheet (before Lifecycle)
 - `Submit Ticket` column does not exist in this template — do not add it
 
-### Inject DQ scores
+#### Inject DQ scores
 
 DQ Rule Occurrences using `TechnicalScript` as Measuring Method are not auto-scored by
 MCC's profiling engine. Inject scores manually via API:
@@ -367,10 +387,13 @@ Status: COMPLETED
 ✓ DQ scores injected successfully.
 ```
 
+**Note:** `cdgc_dq_scores.py` uses a deprecated endpoint (deprecated April 2026, supported
+through July 2026). For new environments, use `/cdgc-dq-setup` with the ICDQ path instead.
+
 Then in CDGC → Explore, open any DQ Rule Occurrence and check the **Data Quality** tab —
 scores should now be visible with pass rate, total rows, and failed row count.
 
-### Measuring Method — valid enum values
+#### Measuring Method — valid enum values
 
 The Measuring Method field in `13_DQ_Rule_Template.xlsx` must be one of these exact
 CamelCase strings (from CDGC_Template_All.xlsx data validation):

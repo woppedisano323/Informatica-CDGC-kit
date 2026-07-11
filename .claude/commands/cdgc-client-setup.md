@@ -735,6 +735,23 @@ This section records the actual test runs performed during skill development. It
 
 ---
 
+## What's next — DQ execution
+
+Importing File 13 (DQ Rule Templates) creates rule *definitions* in CDGC, but no scores
+will ever appear until rules are connected to ICDQ and bound to specific catalog columns.
+
+**To complete the DQ pipeline, run:**
+```
+/cdgc-dq-setup
+```
+
+This skill covers the full 8-step sequence: build ICDQ rules → patch templates → generate
+DQ Rule Occurrences (File 15) → import → link templates to occurrences → MCC scan → verify.
+
+DQ is the third pillar of the CDGC demo story — governance + technical metadata + data quality.
+
+---
+
 ## Sharing this skill
 
 This skill lives at `~/.claude/commands/cdgc-client-setup.md`.

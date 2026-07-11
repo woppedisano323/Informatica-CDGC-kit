@@ -1088,6 +1088,31 @@ You will be prompted for your IDMC username and password — use the same creden
 
 ---
 
+## What's next — DQ execution
+
+Importing File 13 (DQ Rule Templates) creates rule *definitions* in CDGC, but no scores
+will ever appear until rules are connected to ICDQ and bound to specific catalog columns.
+
+**To complete the DQ pipeline, run:**
+```
+/cdgc-dq-setup
+```
+
+This skill covers the full 8-step sequence:
+1. Build ICDQ rules with Claire
+2. Fetch ICDQ artifact IDs
+3. Patch File 13 with ICDQ references
+4. Re-import the patched template
+5. Generate File 15 (DQ Rule Occurrences) — post-scan, environment-specific
+6. Import occurrences
+7. Link templates to occurrences
+8. Run MCC scan → real scores appear in CDGC
+
+DQ is the third pillar of the CDGC demo story — governance + technical metadata + data quality.
+Without `/cdgc-dq-setup`, columns have no DQ scores and the Data Quality tab is empty.
+
+---
+
 ## Sharing this skill
 
 This skill is a Markdown file at `~/.claude/commands/cdgc-setup.md`.
