@@ -174,7 +174,7 @@ On the Capabilities screen, enable exactly these 5 — leave all others off:
 | Shared Secure Agent | ✓ | ✗ results lost (wrong org) |
 | Dedicated Secure Agent | ✓ | ✓ required |
 
-If no dedicated Secure Agent is available, disable Data Profiling and Data Quality — use `cdgc_dq_scores.py` after the scan to inject DQ scores via API.
+If no dedicated Secure Agent is available, disable Data Profiling and Data Quality — DQ scoring requires a Dedicated Secure Agent and cannot be performed without one.
 
 **6. Save and Run**
 - Click **Save**
@@ -249,7 +249,7 @@ governed column count is higher than 18 unique names).
 
 ## Step 6 — Governance pipeline (link, gap analysis, Business Names)
 
-Use the unified governance pipeline — replaces the old `cdgc_gap_analyzer.py` + `cdgc_set_business_names.py` scripts.
+Use the unified governance pipeline (`cdgc_govern_technical.py` supersedes the legacy `cdgc_gap_analyzer.py` and `cdgc_set_business_names.py`).
 
 **Phase 1 + 2a — Link known columns and generate gap review workbook:**
 ```bash
@@ -425,7 +425,7 @@ map for accurate display.
 **Data Profiling and DQ scoring require a Dedicated Secure Agent.** The Hosted Agent
 (serverless) and Shared Secure Agent do not work for profiling — results never appear in
 CDGC. If no dedicated agent is available, disable Data Profiling and Data Quality in the
-MCC capabilities and use `cdgc_dq_scores.py` to inject scores via API after the scan.
+MCC capabilities. DQ scoring is not available without a Dedicated Secure Agent.
 
 **Data Set → AI Model lineage cannot be bulk imported.** The relationship type
 `is in Direct Lineage with` between Business Data Sets and AI Models is listed in the
