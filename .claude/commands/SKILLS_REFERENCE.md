@@ -176,7 +176,7 @@ Wipe all governance assets from a CDGC org. Authenticates via IDMC, scans all 13
 
 ### `/cdgc-demo-live`
 
-Walks through a live demonstration of a pre-built CDGC environment — navigating the UI, showing governance chains, and telling the CDGC story. References the FCB Financial Services demo org.
+Walks through a live demonstration of a pre-built CDGC environment — navigating the UI, showing governance chains, and telling the CDGC story.
 
 **Use when:** You are in a live customer meeting demonstrating CDGC.
 
@@ -316,7 +316,7 @@ For a client-specific environment:
 ---
 
 ### `unlink_wrong_dq_template_links.py`
-**Remove incorrect template→occurrence links.** Removes links created by a previous numeric 1:1 mapping run. Hardcoded to the FCB environment — adapt if needed for other clients.
+**Remove incorrect template→occurrence links.** Removes links created by a previous numeric 1:1 mapping run. Contains a hardcoded list of wrong pairs specific to the FCB environment (see `clients/FCB_Financial_Services.md`). For other clients, adapt the WRONG_LINKS list or re-run `link_dq_templates_to_occurrences.py` with the correct mapping.
 
 **Run:** `python3 unlink_wrong_dq_template_links.py`
 

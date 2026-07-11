@@ -23,7 +23,7 @@ Before we start, confirm:
   ✓ Import files at: ~/Downloads/CDGC_Import_<ClientName>/
 
 What is:
-  1. The client name (e.g., First Capital Bank)
+  1. The client name (e.g., Acme Financial)
   2. The ICDQ project name and folder name
   3. Your IDMC login email
 ```
@@ -74,12 +74,12 @@ Prompts for IDMC credentials. Navigates the FRS API to your project folder and w
 Expected output:
 ```
 ✓ Authenticated (FRS)
-Project: FCB_Financial_Demo → Folder: First Capital Bank
+Project: Acme_Financial_Demo → Folder: Acme Financial
 Found 35 rules
-Written: ~/Downloads/CDGC_Import_FirstCapitalBank/icdq_rules.csv
+Written: icdq_rules.csv
 ```
 
-**If project/folder not found:** Check that the folder name in the script matches exactly the folder name in ICDQ (case-sensitive). Update `ICDQ_FOLDER` in `fetch_icdq_rule_ids.py` if needed.
+**If project/folder not found:** Check that the project and folder names match exactly what's in ICDQ (case-sensitive). The script prompts for both at startup.
 
 ---
 
@@ -259,7 +259,7 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 | `link_dq_templates_to_occurrences.py` | Step 7 | Set template→occurrence relationships via PATCH API |
 | `audit_dq_links.py` | Verify | Audit all templates — expected vs actual occurrence links |
 | `check_dq_links.py` | Verify | Spot-check a single template neighborhood |
-| `count_dq_occurrences.py` | Verify | Count all FCBDQO-* occurrences — confirm expected total before scan |
+| `count_dq_occurrences.py` | Verify | Count all occurrences by prefix — confirm expected total before scan |
 | `cdgc_delete_dq_occurrences.py` | Re-import | Delete all occurrences via REST. Run before re-importing with Operation=Create |
 | `unlink_wrong_dq_template_links.py` | Cleanup | Remove incorrect template→occurrence links (e.g., from a prior numeric-mapping run) |
 

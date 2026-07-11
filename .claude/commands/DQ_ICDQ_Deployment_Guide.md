@@ -8,8 +8,8 @@ Center (MCC) and surface real scores in CDGC.
 
 **Requires:** CDGC org, MCC catalog source configured, ICDQ enabled, Snowflake connection.
 
-**Proven:** 2026-07-06 — FCBDQ-39 (Risk Tier Valid Value) returned a real score of 100%
-across 500 rows on CUSTOMER_MASTER.RISK_TIER in the FCB Financial Services demo environment.
+**Proven:** 2026-07-10 — 40/40 DQ Rule Templates confirmed linked, real MCC→ICDQ scores
+confirmed across 3 occurrences. See `clients/FCB_Financial_Services.md` for full details.
 
 ---
 
@@ -84,7 +84,7 @@ The scores are real. The governance chain can be added later without re-running 
 File 13 (DQ Rule Template) already contains all rule definitions — names, descriptions,
 dimensions, and Input Port Names. Pass the entire rule set to Claire in ICDQ at once:
 
-1. Open ICDQ → New Project → create a folder for the client (e.g. "First Capital Bank")
+1. Open ICDQ → New Project → create a folder for the client (e.g. "Acme Financial")
 2. Open Claire (AI assistant) in ICDQ
 3. Provide Claire with the rule definitions from File 13 — all rules at once, not one by one
 4. Claire generates all rule specs in a single session
@@ -174,7 +174,7 @@ data:
 ```
 Primary Data Element (Required):
   <Catalog Source Name>://<Database>/<Schema>/<Table>/<Column>
-  Example: FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/RISK_TIER
+  Example: MyClient_Snowflake://PROD_DB/ANALYTICS/CUSTOMER_MASTER/RISK_TIER
 ```
 
 The Catalog Source Name is registered in MCC — not in any GUI template download. The
@@ -226,40 +226,39 @@ python3 ~/Documents/CDGC/link_dq_templates_to_occurrences.py
 ```
 
 This step establishes the `relatedRuleTemplateRuleInstance` relationship between each
-DQ Rule Template (FCBDQ-*) and its occurrences (FCBDQO-*). Without this step, the
-**Rule Template** field on each occurrence will be blank in the CDGC UI.
+DQ Rule Template and its occurrences. Without this step, the **Rule Template** field
+on each occurrence will be blank in the CDGC UI.
 
 **Why this is required:** Bulk import does not create this relationship. The Bulk Import
 template has no "Rule Template" column on the DQ Rule Occurrence sheet, and the
 Relationships Annexure has no `RuleTemplate→RuleInstance` entry. When CDGC automation
 is enabled on a template (`Enable Automation = true`), CDGC creates this link
-automatically — but our occurrences are manually imported, bypassing automation.
+automatically — but manually imported occurrences bypass automation.
 
 **How it works:**
-- Reads `13_DQ_Rule_Template_PATCHED.xlsx` to build a `{rule_name → FCBDQ-N}` map
+- Reads `13_DQ_Rule_Template_PATCHED.xlsx` to build a `{rule_name → template ref ID}` map
 - Reads `15_DQ_Rule_Occurrence.xlsx` and extracts each occurrence's rule name
   (text before ` — ` in the occurrence name, e.g. `"Annual Income Positive — CUSTOMER_MASTER.ANNUAL_INCOME"` → `"Annual Income Positive"`)
-- Issues `PATCH /data360/content/v1/assets/{FCBDQ-N}?scheme=external` for each pair:
+- Issues `PATCH /data360/content/v1/assets/{templateRefId}?scheme=external` for each pair:
 
 ```json
 [{"operation": "add", "segment": "relationship",
-  "items": [{"fromExternalIdentity": "FCBDQ-N",
-             "toExternalIdentity": "FCBDQO-N",
+  "items": [{"fromExternalIdentity": "<template-ref-id>",
+             "toExternalIdentity": "<occurrence-ref-id>",
              "association": "com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance"}]}]
 ```
 
-**Many-to-one mapping:** 40 templates cover 77 occurrences. The same rule can apply
-to multiple columns (e.g. `Annual Income Positive` links to FCBDQO-39, 40, and 41 —
-three different columns from three different tables).
+**Many-to-one mapping:** One template can cover multiple occurrences — the same rule
+may apply to matching columns across multiple tables.
 
 The script is idempotent — HTTP 409 (already linked) is treated as a skip.
 
 Expected output:
 ```
-Templates loaded: 40
-Occurrence pairs resolved: 77
+Templates loaded: <N>
+Occurrence pairs resolved: <N>
 ...
-Results: 74 linked | 3 already linked | 0 failed
+Results: <N> linked | <N> already linked | 0 failed
 ```
 
 Verify with:
@@ -285,14 +284,14 @@ Scores appear on the column Data Quality tab within minutes of scan completion.
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | "Specify a valid output port" on rule | Output Port Name blank or wrong | Must be exactly `Output` — match ICDQ rule output port name |
-| Occurrence import PARTIAL_COMPLETED with empty detail | 3 rules had no matching columns (TAX_RESIDENCY, CTR_FLAG, KYC_VERIFIED_DATE not in schema) — all other rows created successfully | Expected — those 3 rules have no column to link to |
+| Occurrence import PARTIAL_COMPLETED with empty detail | Some rules had no matching columns in the scanned schema — all other rows created successfully | Expected — those rules have no column to link to. Check warnings from Step 5. |
 | Need to re-import occurrences after changes | Old occurrences still exist — Create fails on duplicates | Run cdgc_delete_dq_occurrences.py first, then re-import with Create |
 | Operation=Delete in xlsx fails for occurrences | Bulk import Delete not supported for this asset type | Use cdgc_delete_dq_occurrences.py (REST API DELETE) instead |
 | Occurrence import FAILED with empty detail | PDE path not found in catalog | Verify catalog source name in MCC + exact DB/Schema/Table/Column from scan |
 | PARTIAL_COMPLETED on template import | Some rows have Operation=Create but already exist | Force all rows to Operation=Update |
 | No scores after MCC scan | Occurrence has wrong Measuring Method | Occurrence needs InformaticaCloudDataQuality + Technical Rule Reference |
 | "Rule Template" field blank on occurrence in UI | Template→occurrence link not set | Run link_dq_templates_to_occurrences.py (Step 7) — bulk import does not create this relationship |
-| link script shows HTTP 404 for FCBDQ-41+ | Template→occurrence mapping is not 1:1 | Script uses name-based matching — 40 templates cover 77 occurrences. Do not use numeric index matching. |
+| link script shows HTTP 404 for some templates | Template reference ID doesn't exist in org | Confirm templates were imported. Do not assume numeric index matching — script uses name-based matching. |
 | Template shows wrong occurrences in UI after linking | Numeric 1:1 script was run before name-based script — created 37 wrong links | Run `unlink_wrong_dq_template_links.py` to remove them, then re-run `link_dq_templates_to_occurrences.py` |
 | link script shows HTTP 409 (already linked) | Relationship already exists | Expected — script counts these as skipped, not failed. Safe to re-run. |
 | FRS API returns HTML redirect | Using JWT Bearer on FRS endpoint | Use IDS-SESSION-ID header for all FRS calls |
@@ -319,30 +318,25 @@ SE workflow for a new engagement:
 | Script | Step | Purpose |
 |--------|------|---------|
 | `fetch_icdq_rule_ids.py` | Step 2 | Fetches ICDQ rule artifact IDs via FRS API → icdq_rules.csv |
-| `patch_dq_template.py` | Step 3 | Patches File 13 with ICDQ refs, Output Port Name, Operation=Update |
-| `cdgc_import_single.py` | Steps 4, 6 | Imports any single xlsx file into CDGC, polls for completion |
-| `cdgc_create_dq_occurrences.py` | Step 5 | Generates File 15 from patched template + live CDGC columns |
-| `cdgc_delete_dq_occurrences.py` | — | Deletes all FCBDQO-* occurrences via REST API — use before re-importing with Create |
+| `patch_dq_template.py` | Step 3 | Patches File 13 with ICDQ refs, Output Port Name, Operation=Update. Fuzzy-matches template names to ICDQ rule names — requires CONFIRM before writing. |
+| `cdgc_import.py` | Steps 4, 6 | Imports any single xlsx file into CDGC, polls for completion |
+| `cdgc_create_dq_occurrences.py` | Step 5 | Generates File 15 from patched template + live CDGC columns. Prompts for import dir and occurrence prefix. |
+| `cdgc_delete_dq_occurrences.py` | — | Deletes all occurrences via REST API — reads IDs from File 15 or prompts for prefix + count. Use before re-importing with Create. |
 | `cdgc_update_dq_occurrences.py` | — | Generates occurrence file with Operation=Update — use when occurrences already exist |
-| `link_dq_templates_to_occurrences.py` | Step 7 | Links each FCBDQ-N → FCBDQO-N via PATCH API. Reads File 13 + File 15 to build name-based mapping. Sets `relatedRuleTemplateRuleInstance` relationship. Idempotent — safe to re-run. |
-| `audit_dq_links.py` | Verify | Audits all 40 templates at once — compares actual linked occurrences against File 15. Reports OK / MISSING / EXTRA per template. Run after Step 7 to confirm clean state. |
-| `check_dq_links.py` | Verify | Checks template↔occurrence neighborhood for a given FCBDQ-N. Use for spot-checking a single template. |
-| `count_dq_occurrences.py` | Verify | Counts all FCBDQO-* occurrences in CDGC. Use to confirm all 77 are present before running MCC scan. |
-| `cdgc_dq_scores.py` | Legacy | Synthetic score injection — superseded by real MCC execution. Do not use. |
+| `link_dq_templates_to_occurrences.py` | Step 7 | Links templates to occurrences via PATCH API. Name-based many-to-one matching from Files 13 + 15. Sets `relatedRuleTemplateRuleInstance`. Idempotent — safe to re-run. |
+| `audit_dq_links.py` | Verify | Audits all templates — compares actual linked occurrences against File 15. Reports OK / MISSING / EXTRA per template. Run after Step 7. |
+| `check_dq_links.py` | Verify | Spot-checks one template+occurrence pair. Prompts for IDs. |
+| `count_dq_occurrences.py` | Verify | Counts all occurrences by prefix. Confirms expected total present before MCC scan. |
 
 ---
 
-## FCB Demo Environment Reference
+## Client Environment Logs
 
-| Property | Value |
-|----------|-------|
-| Catalog source name | `FCB_Financial_Snowflake` |
-| Database | `TEST_DB` |
-| Core schema | `WILL_CDGC_DEMO` |
-| ICDQ project | `FCB_Financial_Demo` (id: a6SFXtekQAhjnxRmm8wYqe) |
-| ICDQ folder | `First Capital Bank` (id: 4IL9eGepYkjgFyUxoWlygy) |
-| Rules linked to ICDQ | 35 |
-| Rules remaining as TechnicalScript | 5 (FCBDQ-3, -4, -6, -14, -17) |
+Client-specific configuration (catalog source names, reference ID prefixes, ICDQ project
+IDs, proven scores, import history) is kept in `clients/` at the repo root — not in this
+guide. This keeps the guide reusable across engagements.
+
+- `clients/FCB_Financial_Services.md` — First Capital Bank Financial Services demo env
 
 ---
 
