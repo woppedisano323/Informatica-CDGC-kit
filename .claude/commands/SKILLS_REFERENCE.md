@@ -148,9 +148,7 @@ Step 8  Run MCC scan                          ← human action required
         Verify: real DQ scores appear in CDGC
 ```
 
-**Two scoring paths:**
-- **ICDQ path** (default, recommended) — real scores via ICDQ + MCC Data Quality
-- **Score injection path** — synthetic scores for demo/presentation (no ICDQ required)
+All DQ scores produced by this skill are real — executed by ICDQ against live Snowflake data.
 
 **Prerequisites:** Files 01–14 imported, ICDQ enabled, MCC catalog source configured, Snowflake scan completed.
 
@@ -321,15 +319,6 @@ For a client-specific environment:
 **Remove incorrect template→occurrence links.** Removes links created by a previous numeric 1:1 mapping run. Hardcoded to the FCB environment — adapt if needed for other clients.
 
 **Run:** `python3 unlink_wrong_dq_template_links.py`
-
----
-
-### `cdgc_dq_scores.py`
-**Inject synthetic DQ scores (legacy).** POSTs synthetic DQ scores for all occurrences via the score injection API. Use when ICDQ is not available and you need scores for a presentation.
-
-**Note:** Deprecated endpoint (April 2026, supported through July 2026). Prefer `/cdgc-dq-setup` with ICDQ path for new environments.
-
-**Run:** `python3 cdgc_dq_scores.py`
 
 ---
 

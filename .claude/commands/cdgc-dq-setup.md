@@ -32,20 +32,11 @@ Wait for the user's response before continuing.
 
 ---
 
-## Skill scope and deployment paths
+## Prerequisite: ICDQ must be enabled
 
-This skill covers the **ICDQ execution path** — real rules executing against live Snowflake data with auto-scored results. A second path exists for environments without ICDQ:
+This skill requires ICDQ enabled in your org. All DQ scores produced by this pipeline are real — executed by ICDQ against live Snowflake data. There is no synthetic score path.
 
-| Path | When to use | Scores |
-|------|------------|--------|
-| **ICDQ path (this skill)** | ICDQ + MCC with Data Quality capability | Real — scored by ICDQ on live data |
-| **Score injection path** | No ICDQ, demo/presentation only | Synthetic — `cdgc_dq_scores.py` injects via API |
-
-If the user confirms ICDQ is not available, switch to the score injection path:
-- Skip Steps 1–4 (no patching needed — leave Measuring Method = `TechnicalScript`)
-- Run Steps 5–6 (generate and import occurrences)
-- After MCC scan: run `python3 ~/Documents/CDGC/cdgc_dq_scores.py` to inject synthetic scores
-- Skip audit (template→occurrence links are not required for the score injection path)
+If ICDQ is not yet enabled, contact your Informatica org administrator before proceeding.
 
 ---
 
@@ -270,7 +261,6 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 | `check_dq_links.py` | Verify | Spot-check a single template neighborhood |
 | `count_dq_occurrences.py` | Verify | Count all FCBDQO-* occurrences — confirm expected total before scan |
 | `cdgc_delete_dq_occurrences.py` | Re-import | Delete all occurrences via REST. Run before re-importing with Operation=Create |
-| `cdgc_dq_scores.py` | Fallback | Inject synthetic DQ scores (score injection path only — deprecated April 2026, supported through July 2026) |
 | `unlink_wrong_dq_template_links.py` | Cleanup | Remove incorrect template→occurrence links (e.g., from a prior numeric-mapping run) |
 
 ---

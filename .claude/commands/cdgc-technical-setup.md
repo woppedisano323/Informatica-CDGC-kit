@@ -291,122 +291,26 @@ Business Names will populate on all linked columns once the job completes.
 
 ## Step 6b — DQ Rule Occurrences
 
-This step binds your DQ Rule Templates (imported in file 13) to physical columns in the
-catalog so that DQ scores are visible in CDGC. There are two paths depending on whether
-ICDQ is enabled in your org:
+This step binds your DQ Rule Templates to physical columns in the catalog so that MCC
+executes ICDQ rules and writes real DQ scores back to CDGC.
 
-| Path | When | Scores |
-|------|------|--------|
-| **ICDQ path** (recommended) | ICDQ enabled + MCC Data Quality capability | Real — ICDQ executes rules against live Snowflake data |
-| **Score injection path** | No ICDQ, or demo/presentation only | Synthetic — injected via API |
-
-**Run the dedicated skill for the full ICDQ path:**
+**Run the dedicated skill:**
 ```
 /cdgc-dq-setup
 ```
-This runs the complete 8-step sequence: fetch ICDQ rule IDs → patch template → import →
-generate occurrences → import occurrences → link templates → MCC scan → verify.
-The DQ deployment guide (`DQ_ICDQ_Deployment_Guide.md`) has full technical reference.
 
----
+This covers the complete 8-step sequence: build ICDQ rules in Claire → fetch artifact IDs
+→ patch File 13 → import → generate File 15 (DQ Rule Occurrences) → import occurrences
+→ link templates to occurrences → MCC scan → verify real scores.
 
-### Score injection path (no ICDQ)
+All DQ scores in this pipeline are real — executed by ICDQ against live Snowflake data.
 
-Use when ICDQ is not available and you need DQ scores in the UI for a presentation.
+**Why File 15 is not in the 14-file template package:** The `Primary Data Element` path
+is environment-specific (`<CatalogSourceName>://<DB>/<Schema>/<Table>/<Column>`) and only
+exists after the MCC scan. It cannot be templated or copied from another environment.
+`cdgc_create_dq_occurrences.py` generates it dynamically from the live CDGC catalog.
 
-#### Why 15_DQ_Rule_Occurrence.xlsx is not in the 14-file template
-
-The standard demo package contains 14 import files (01–14). DQ Rule Occurrences are
-intentionally excluded because the **Primary Data Element (PDE) path is environment-specific**:
-
-```
-FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/SSN
-```
-
-This path contains the MCC catalog source name and the exact DB/Schema/Table/Column path
-as scanned. These values only exist after your MCC scan and are unique to your org.
-A static template file cannot be prefix-swapped to produce valid PDE paths for a different
-environment — so the occurrence file is always generated at runtime, never copied from a template.
-
-#### Prerequisites
-
-- Files 01–14 imported (including `13_DQ_Rule_Template.xlsx`)
-- MCC scan completed (Metadata Extraction must be done — columns must exist in the catalog)
-
-#### Generate the occurrence file
-
-```bash
-python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
-```
-
-This script reads `13_DQ_Rule_Template.xlsx`, queries live CDGC for all scanned columns
-matching each rule's Input Port Name, and builds `15_DQ_Rule_Occurrence.xlsx` with the
-correct PDE path for each column.
-
-Expected output:
-```
-✓ Authenticated
-Found 35 DQ Rule Templates
-Matching columns in CDGC...
-  SSN Not Null → CUSTOMER_MASTER.SSN (FCB_Financial_Snowflake://TEST_DB/WILL_CDGC_DEMO/CUSTOMER_MASTER/SSN)
-  ...
-74 occurrences written to 15_DQ_Rule_Occurrence.xlsx
-0 warnings
-```
-
-**If warnings appear:** The Input Port Name in the rule template doesn't match any scanned
-column name. Check the exact column name in Snowflake — Input Port Name must be an exact
-case-sensitive match to the physical column name.
-
-#### Import the occurrence file
-
-Import `15_DQ_Rule_Occurrence.xlsx` via the standard bulk import UI (CDGC → gear icon →
-Import). Wait for **COMPLETED** status before proceeding.
-
-**If hard FAILED with empty detail:** This is a structural rejection. Causes:
-- Measuring Method value is not exact CamelCase (see constraints below)
-- Column structure mismatch — Input Port Name must be column 8 in the sheet (before Lifecycle)
-- `Submit Ticket` column does not exist in this template — do not add it
-
-#### Inject DQ scores
-
-DQ Rule Occurrences using `TechnicalScript` as Measuring Method are not auto-scored by
-MCC's profiling engine. Inject scores manually via API:
-
-```bash
-python3 ~/Documents/CDGC/cdgc_dq_scores.py
-```
-
-Expected output:
-```
-✓ Authenticated
-DQ Score CSV — 74 occurrences
-...
-Status: 202
-Status: COMPLETED
-✓ DQ scores injected successfully.
-```
-
-**Note:** `cdgc_dq_scores.py` uses a deprecated endpoint (deprecated April 2026, supported
-through July 2026). For new environments, use `/cdgc-dq-setup` with the ICDQ path instead.
-
-Then in CDGC → Explore, open any DQ Rule Occurrence and check the **Data Quality** tab —
-scores should now be visible with pass rate, total rows, and failed row count.
-
-#### Measuring Method — valid enum values
-
-The Measuring Method field in `13_DQ_Rule_Template.xlsx` must be one of these exact
-CamelCase strings (from CDGC_Template_All.xlsx data validation):
-
-| Value | When to use | Auto-scored by MCC? |
-|---|---|---|
-| `TechnicalScript` | External script executes the rule | ❌ — inject via API |
-| `BusinessExtract` | Scores come from a business-side extract | ❌ — inject via API |
-| `SystemFunction` | Scores come from a system-level function | ❌ — inject via API |
-| `InformaticaCloudDataQuality` | Rules built in ICDQ | ✅ — MCC auto-scores |
-
-**Do NOT use `InformaticaCloudDataQuality`** unless the Technical Rule Reference IDs from
-ICDQ are populated. The import will fail with a hard FAILED if that field is blank.
+**Full technical reference:** `DQ_ICDQ_Deployment_Guide.md`
 
 ---
 
@@ -491,7 +395,7 @@ Not everything in this skill can be scripted — here's the current state:
 | Import governance assets | ✅ Yes | Validated — bulk import API |
 | Link classifications to Business Terms | ✅ Yes | `cdgc_link_classifications.py` — run after promoting MCC classifications |
 | Generate DQ Rule Occurrences | ✅ Yes | `cdgc_create_dq_occurrences.py` — queries live catalog, generates file 15 |
-| Inject DQ scores | ✅ Yes | `cdgc_dq_scores.py` — POST `/data-quality/v1/rule-occurrences/runs` (deprecated April 2026, supported until July 2026) |
+| Execute DQ rules and score | ✅ Yes (via MCC) | MCC scan with Data Quality capability reads occurrences, calls ICDQ, writes real scores |
 
 **Future automation path:** The Informatica Developer Portal (`developer.informatica.com`)
 likely contains the catalog source creation endpoints. If access is obtained, Steps 2–3
