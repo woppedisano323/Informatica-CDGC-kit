@@ -745,7 +745,7 @@ will ever appear until rules are connected to ICDQ and bound to specific catalog
 /cdgc-dq-setup
 ```
 
-This skill covers the full 8-step sequence: build ICDQ rules → patch templates → generate
+This skill covers the full 6-step sequence: build ICDQ rules → patch templates → generate
 DQ Rule Occurrences (File 15) → import → link templates to occurrences → MCC scan → verify.
 
 DQ is the third pillar of the CDGC demo story — governance + technical metadata + data quality.
