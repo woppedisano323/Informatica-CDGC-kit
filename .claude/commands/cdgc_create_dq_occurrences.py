@@ -2,24 +2,26 @@
 """
 cdgc_create_dq_occurrences.py
 
-Reads 13_DQ_Rule_Template_PATCHED.xlsx, queries CDGC for every column whose
-name matches a rule's Input Port Name, and generates 15_DQ_Rule_Occurrence.xlsx.
+Three-phase DQ occurrence pipeline — generate, import, and link in one run:
 
-Operation=Create  — use when occurrences do not yet exist in CDGC (first run)
-Operation=Update  — use when occurrences already exist (re-run after changes)
-
-The Primary Data Element field format required by bulk import is:
-  CatalogSourceName://DB/Schema/Table/ColumnName
-
-We reconstruct this from core.location in the CDGC search API response.
+  Phase 1  Read 13_DQ_Rule_Template_PATCHED.xlsx, fetch all scanned columns,
+           build Primary Data Element paths from core.location
+  Phase 2  Match rules to columns, write 15_DQ_Rule_Occurrence.xlsx, preview → CONFIRM
+  Phase 3  Import File 15 via API (poll to COMPLETED), then PATCH all
+           template→occurrence relationships
 
 Usage:
-  python3 cdgc_create_dq_occurrences.py              # defaults to Create
-  python3 cdgc_create_dq_occurrences.py --update     # sets Operation=Update
-  python3 cdgc_update_dq_occurrences.py              # wrapper for Update
+  python3 cdgc_create_dq_occurrences.py              # Operation=Create (first run)
+  python3 cdgc_create_dq_occurrences.py --update     # Operation=Update (re-run)
+
+To re-run after changes: delete existing occurrences first with
+  python3 cdgc_delete_dq_occurrences.py
+then re-run this script.
 """
 import argparse
 import getpass
+import json
+import sys
 import time
 from pathlib import Path
 
@@ -40,8 +42,9 @@ except ImportError:
 LOGIN_URL    = "https://dmp-us.informaticacloud.com"
 ORG_URL      = "https://idmc-api.dmp-us.informaticacloud.com"
 COLUMN_CLASS = "com.infa.odin.models.relational.Column"
+ASSOC_TYPE   = "com.infa.ccgf.models.governance.relatedRuleTemplateRuleInstance"
 
-# ── Import directory and occurrence prefix ────────────────────────────────────
+# ── Inputs ────────────────────────────────────────────────────────────────────
 import_dir_raw = input("Import directory (e.g. ~/Downloads/CDGC_Import_MyClient): ").strip()
 IMPORT_DIR = Path(import_dir_raw).expanduser()
 OCC_PREFIX = input("Occurrence reference ID prefix (e.g. DQOCC): ").strip()
@@ -52,15 +55,14 @@ OCCURRENCE_FILE = IMPORT_DIR / (
     else "15_DQ_Rule_Occurrence.xlsx"
 )
 
-# Measuring method normalization — template uses CamelCase, import expects exact string
 METHOD_MAP = {
-    "technicalscript":              "TechnicalScript",
-    "technical script":             "TechnicalScript",
-    "businessextract":              "BusinessExtract",
-    "business extract":             "BusinessExtract",
-    "systemfunction":               "SystemFunction",
-    "system function":              "SystemFunction",
-    "informaticaclouddataquality":  "InformaticaCloudDataQuality",
+    "technicalscript":               "TechnicalScript",
+    "technical script":              "TechnicalScript",
+    "businessextract":               "BusinessExtract",
+    "business extract":              "BusinessExtract",
+    "systemfunction":                "SystemFunction",
+    "system function":               "SystemFunction",
+    "informaticaclouddataquality":   "InformaticaCloudDataQuality",
     "informatica cloud data quality":"InformaticaCloudDataQuality",
 }
 
@@ -76,11 +78,13 @@ r2 = requests.get(
     f"{LOGIN_URL}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234",
     headers={"IDS-SESSION-ID": sid}, cookies={"USER_SESSION": sid}, timeout=30)
 jwt = r2.json().get("token") or r2.json().get("jwt_token")
-H = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": oid, "Content-Type": "application/json"}
+H_base = {"Authorization": f"Bearer {jwt}", "X-INFA-ORG-ID": oid}
+H      = {**H_base, "Content-Type": "application/json"}
 print("✓ Authenticated\n")
 
-# ── Read DQ Rule Templates ────────────────────────────────────────────────────
-print("Reading 13_DQ_Rule_Template.xlsx...")
+# ══ PHASE 1: Read templates, fetch columns, build PDE paths ══════════════════
+
+print("Phase 1 — Reading 13_DQ_Rule_Template_PATCHED.xlsx...")
 wb_tmpl = load_workbook(TEMPLATE_FILE)
 ws_tmpl = wb_tmpl.active
 hdrs = [str(c.value or "").strip() for c in ws_tmpl[1]]
@@ -91,8 +95,7 @@ for row in ws_tmpl.iter_rows(min_row=2, values_only=True):
     if not any(row):
         continue
     d = dict(zip(hdrs, row))
-    operation  = str(d.get("Operation") or "").strip().lower()
-    if operation == "delete":
+    if str(d.get("Operation") or "").strip().lower() == "delete":
         continue
     input_port = str(d.get("Input Port Name") or "").strip()
     if not input_port:
@@ -117,7 +120,6 @@ print(f"  {len(rules)} rules loaded:")
 for r_ in rules:
     print(f"    [{r_['ref_id']}] {r_['name']}  →  column: {r_['input_port']}")
 
-# ── Fetch all scanned columns ─────────────────────────────────────────────────
 print("\nFetching all scanned columns from CDGC...")
 all_cols = []
 offset   = 0
@@ -146,9 +148,9 @@ print("\n  Sample core.location values (first 5):")
 for c in all_cols[:5]:
     print(f"    name={c['name']!r}  loc={c['loc']!r}")
 
-# ── Resolve catalog source name from UUID ─────────────────────────────────────
-def get_catalog_source_name(uuid: str) -> str:
-    """Look up the human-readable catalog source name by its internal UUID."""
+
+def get_catalog_source_name(uuid):
+    """Resolve the human-readable catalog source name from its internal UUID."""
     try:
         r = requests.get(
             f"{ORG_URL}/data360/search/v1/assets/{uuid}?scheme=internal&segments=summary",
@@ -159,36 +161,26 @@ def get_catalog_source_name(uuid: str) -> str:
                 return name
     except Exception:
         pass
-    return uuid  # fallback: use UUID as-is
+    return uuid
 
 
-# ── Build Primary Data Element from core.location ────────────────────────────
-def build_pde(loc: str, catalog_name: str) -> str:
+def build_pde(loc, catalog_name):
     """
-    core.location actual format observed in CDGC:
-      UUID://UUID/DB/Schema/Table/Column
-
-    Required import format:
-      CatalogSourceName://DB/Schema/Table/Column
-
-    Strategy:
-      - Split on '://' to isolate the path portion
-      - The path portion is UUID/DB/Schema/Table/Column
-      - Strip the leading UUID segment to get DB/Schema/Table/Column
-      - Prepend the human-readable catalog source name
+    core.location format:   UUID://UUID/DB/Schema/Table/Column
+    Required import format: CatalogSourceName://DB/Schema/Table/Column
     """
     if "://" not in loc:
         return ""
-    after_scheme = loc.split("://", 1)[1]        # UUID/DB/Schema/Table/Column
+    after_scheme = loc.split("://", 1)[1]
     slash_pos = after_scheme.find("/")
     if slash_pos == -1:
         return ""
-    path = after_scheme[slash_pos + 1:]           # DB/Schema/Table/Column
+    path = after_scheme[slash_pos + 1:]
     if not path:
         return ""
     return f"{catalog_name}://{path}"
 
-# ── Resolve catalog source name from the UUID in the first location sample ────
+
 catalog_name = ""
 if all_cols:
     first_loc = all_cols[0]["loc"]
@@ -200,21 +192,19 @@ if all_cols:
             catalog_name = resolved
             print(f"  → Catalog source name: {catalog_name}")
         else:
-            catalog_name = input("  Could not resolve catalog source name. Enter it manually (from MCC → Catalog Sources): ").strip()
+            catalog_name = input("  Could not resolve. Enter catalog source name manually (MCC → Catalog Sources): ").strip()
             print(f"  → Using: {catalog_name}")
 
-# ── Index columns by name → list of (pde, table) ─────────────────────────────
-col_by_name: dict[str, list[dict]] = {}
+col_by_name = {}
 for c in all_cols:
     key = c["name"].upper()
     pde = build_pde(c["loc"], catalog_name)
     if not pde:
         continue
-    # Table is the second-to-last path segment in DB/Schema/Table/Column
     path_after_scheme = c["loc"].split("://", 1)[1] if "://" in c["loc"] else c["loc"]
     slash_pos = path_after_scheme.find("/")
     path_only = path_after_scheme[slash_pos + 1:] if slash_pos != -1 else path_after_scheme
-    parts = [p for p in path_only.split("/") if p]  # [DB, Schema, Table, Column]
+    parts = [p for p in path_only.split("/") if p]
     table = parts[-2] if len(parts) >= 2 else (parts[-1] if parts else "UNKNOWN")
     entry = {"pde": pde, "table": table}
     if key not in col_by_name:
@@ -222,8 +212,9 @@ for c in all_cols:
     if pde not in [e["pde"] for e in col_by_name[key]]:
         col_by_name[key].append(entry)
 
-# ── Match rules to columns ────────────────────────────────────────────────────
-print("\nMatching rules to columns...")
+# ══ PHASE 2: Match rules to columns, build File 15, prompt CONFIRM ════════════
+
+print("\nPhase 2 — Matching rules to columns...")
 occurrences = []
 occ_counter = 1
 warnings    = []
@@ -254,11 +245,11 @@ for rule in rules:
             "table":      m["table"],
             "rule_name":  rule["name"],
             "input_port": rule["input_port"],
+            "tpl_ref":    rule["ref_id"],
         })
 
 print(f"\n  Occurrences to create: {len(occurrences)}")
 
-# ── Preview table ─────────────────────────────────────────────────────────────
 print("\n  Preview:")
 print(f"  {'Ref ID':<12} {'Table':<30} {'Column':<20} {'PDE (truncated)'}")
 print(f"  {'-'*12} {'-'*30} {'-'*20} {'-'*40}")
@@ -269,13 +260,28 @@ for occ in occurrences[:20]:
 if len(occurrences) > 20:
     print(f"  ... and {len(occurrences) - 20} more")
 
+if warnings:
+    print(f"\n  {len(warnings)} rules had no matching column (will be skipped in import):")
+    for w in warnings:
+        print(f"  {w}")
+
+print(f"""
+This script will now:
+  1. Write   {OCCURRENCE_FILE.name}  ({len(occurrences)} rows)
+  2. Import  via CDGC bulk import API (POST -> poll to COMPLETED)
+  3. Link    {len(occurrences)} template->occurrence relationships via PATCH API
+""")
+confirm = input("Proceed? [yes/no]: ").strip().lower()
+if confirm not in ("yes", "y"):
+    print("Aborted.")
+    sys.exit(0)
+
 # ── Write 15_DQ_Rule_Occurrence.xlsx ─────────────────────────────────────────
 print(f"\nWriting {OCCURRENCE_FILE.name}...")
-wb_out  = Workbook()
-ws_out  = wb_out.active
+wb_out = Workbook()
+ws_out = wb_out.active
 ws_out.title = "Data Quality Rule Occurrence"
 
-# Column order matches CDGC_Template_All.xlsx "Data Quality Rule Occurrence" tab exactly
 HDR_COLS = [
     ("Reference ID",                          18),
     ("Name",                                  50),
@@ -317,30 +323,30 @@ ws_out.row_dimensions[1].height = 22
 
 for occ in occurrences:
     row_data = [
-        occ["ref_id"],       # Reference ID
-        occ["name"],         # Name
-        "",                  # Description
-        occ["criticality"],  # Criticality
-        occ["dimension"],    # Dimension
-        "",                  # Exception File Path
-        "",                  # Frequency
-        occ["input_port"],   # Input Port Name
-        "",                  # Lifecycle
-        occ["method"],       # Measuring Method — InformaticaCloudDataQuality or TechnicalScript
-        "Output" if occ["method"] == "InformaticaCloudDataQuality" else "",  # Output Port Name
-        "",                  # Scanned Time
-        "",                  # Score
-        "",                  # Technical Description
-        occ["tech_ref"],     # Technical Rule Reference — ICDQ rule ID when InformaticaCloudDataQuality
-        occ["target"],       # Target
-        occ["threshold"],    # Threshold
-        "",                  # Total Rows
-        "",                  # Failed Rows
-        occ["pde"],          # Primary Data Element
-        "",                  # Secondary Data Element
-        OPERATION,           # Operation — Create (first run) or Update (re-run)
-        "",                  # Stakeholder: Governance Owner
-        "",                  # Stakeholder: Governance Administrator
+        occ["ref_id"],
+        occ["name"],
+        "",
+        occ["criticality"],
+        occ["dimension"],
+        "",
+        "",
+        occ["input_port"],
+        "",
+        occ["method"],
+        "Output" if occ["method"] == "InformaticaCloudDataQuality" else "",
+        "",
+        "",
+        "",
+        occ["tech_ref"],
+        occ["target"],
+        occ["threshold"],
+        "",
+        "",
+        occ["pde"],
+        "",
+        OPERATION,
+        "",
+        "",
     ]
     ws_out.append(row_data)
     rn = ws_out.max_row
@@ -350,28 +356,111 @@ for occ in occurrences:
     ws_out.row_dimensions[rn].height = 16
 
 wb_out.save(OCCURRENCE_FILE)
-print(f"✓ Saved: {OCCURRENCE_FILE}")
-print(f"  {len(occurrences)} rows  ({occ_counter - 1} occurrences)")
+print(f"  Saved: {OCCURRENCE_FILE}")
 
-if warnings:
-    print(f"\nWarnings ({len(warnings)} rules had no column matches):")
-    for w in warnings:
-        print(w)
+# ══ PHASE 3a: Import File 15 via API ═════════════════════════════════════════
 
-print(f"""
-{'═'*60}
-NEXT STEPS
-{'═'*60}
-1. Verify the file:
-   open "{OCCURRENCE_FILE}"
+print(f"\nPhase 3a — Importing {OCCURRENCE_FILE.name}...")
+with open(OCCURRENCE_FILE, "rb") as f:
+    resp = requests.post(
+        f"{ORG_URL}/data360/content/import/v1/assets",
+        headers=H_base,
+        files={
+            "file": (OCCURRENCE_FILE.name, f,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            "config": (None, '{"validationPolicy":"CONTINUE_ON_ERROR_WARNING"}',
+                       "application/json"),
+        },
+        timeout=60)
 
-   Check that the Primary Data Element paths look correct:
-     CatalogSourceName://DB/Schema/Table/Column
+if resp.status_code not in (200, 201, 202):
+    print(f"Submit failed: HTTP {resp.status_code}: {resp.text[:300]}")
+    sys.exit(1)
 
-2. Import into CDGC using the bulk import tool or API.
-   Upload: {OCCURRENCE_FILE.name}
+job_id = resp.json().get("jobId") or resp.json().get("id")
+print(f"  Job ID: {job_id}  — polling...")
 
-3. After import completes (COMPLETED), run another MCC scan.
-   The DQ scores will now appear on the matched columns.
-{'═'*60}
+terminal = {"COMPLETED", "FAILED", "COMPLETED_WITH_ERRORS", "PARTIAL_COMPLETED", "PARTIAL_SUCCESS"}
+deadline = time.time() + 3600
+dots = 0
+import_status = "UNKNOWN"
+while time.time() < deadline:
+    r4 = requests.get(f"{ORG_URL}/data360/observable/v1/jobs/{job_id}",
+        headers=H, timeout=30)
+    data = r4.json()
+    import_status = data.get("status", "UNKNOWN")
+    if import_status in terminal:
+        print(f"\r  {import_status}          ")
+        if import_status == "FAILED":
+            print(f"  Detail: {json.dumps(data.get('errors', data.get('detail', '')))[:500]}")
+            print("Import FAILED — aborting before link phase.")
+            sys.exit(1)
+        if import_status in ("PARTIAL_COMPLETED", "PARTIAL_SUCCESS"):
+            print("  Note: PARTIAL_COMPLETED is expected when some rules have no matching column.")
+            print("  All successfully imported occurrences will be linked in Phase 3b.")
+        break
+    elapsed = int(time.time() - (deadline - 3600))
+    print(f"\r  {import_status} ({elapsed}s){'.' * (dots % 4)}   ", end="", flush=True)
+    dots += 1
+    time.sleep(5)
+
+# ══ PHASE 3b: PATCH template->occurrence relationships ════════════════════════
+
+print("\nPhase 3b — Linking templates to occurrences...")
+print(f"  {'Occurrence':<14} {'Template':<12} {'Status':<12} Detail")
+print(f"  {'-' * 70}")
+
+linked  = 0
+skipped = 0
+failed  = 0
+errors  = []
+
+for occ in occurrences:
+    occ_id = occ["ref_id"]
+    tpl_id = occ["tpl_ref"]
+    url  = f"{ORG_URL}/data360/content/v1/assets/{tpl_id}?scheme=external"
+    body = [{
+        "operation": "add",
+        "segment": "relationship",
+        "items": [{
+            "fromExternalIdentity": tpl_id,
+            "toExternalIdentity":   occ_id,
+            "association":          ASSOC_TYPE
+        }]
+    }]
+    r5 = requests.patch(url, headers=H, json=body, timeout=30)
+
+    if r5.status_code in (200, 201, 204):
+        print(f"  {occ_id:<12} {tpl_id:<12} LINKED")
+        linked += 1
+    elif r5.status_code == 409:
+        print(f"  {occ_id:<12} {tpl_id:<12} SKIP         already linked")
+        skipped += 1
+    else:
+        print(f"  {occ_id:<12} {tpl_id:<12} FAILED       HTTP {r5.status_code}: {r5.text[:60]}")
+        failed += 1
+        errors.append((tpl_id, occ_id, r5.status_code, r5.text[:200]))
+
+    time.sleep(0.3)
+
+print(f"\n{'='*60}")
+print(f"Import:   {import_status}")
+print(f"Linked:   {linked} | Already linked: {skipped} | Failed: {failed}")
+print(f"File:     {OCCURRENCE_FILE}")
+
+if errors:
+    print("\nFailed links:")
+    for tpl, occ_id, code, txt in errors:
+        print(f"  {tpl} -> {occ_id}  HTTP {code}: {txt}")
+else:
+    print("""
+All phases complete.
+
+Next step: Run MCC scan
+  MCC -> Catalog Sources -> your catalog source -> Run
+  Confirm Data Quality capability is enabled (Edit -> Capabilities -> Data Quality checked)
+
+After scan: verify scores appeared
+  python3 check_dq_links.py   -- spot-check one template
+  python3 audit_dq_links.py   -- audit all templates vs File 15
 """)

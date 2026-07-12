@@ -141,10 +141,8 @@ Step 1  Build ICDQ rules with Claire         ← human action required
 Step 2  Fetch ICDQ artifact IDs
 Step 3  Patch DQ Rule Template (File 13)
 Step 4  Import patched template
-Step 5  Generate DQ Rule Occurrences (File 15) — post-scan, environment-specific
-Step 6  Import occurrences
-Step 7  Link templates to occurrences
-Step 8  Run MCC scan                          ← human action required
+Step 5  Generate, import, and link occurrences — all in one script
+Step 6  Run MCC scan                          ← human action required
         Verify: real DQ scores appear in CDGC
 ```
 
@@ -232,14 +230,22 @@ For a client-specific environment:
 ---
 
 ### `cdgc_create_dq_occurrences.py`
-**Generate File 15 (DQ Rule Occurrences).** Reads patched File 13, queries live CDGC for all scanned columns matching each rule's Input Port Name, and builds `15_DQ_Rule_Occurrence.xlsx` with the correct Primary Data Element path for each column. Run after MCC scan — PDE paths require post-scan catalog data.
+**Three-phase DQ occurrence pipeline.** Single command that generates File 15, imports it via the CDGC API, and links all template→occurrence relationships — replacing the former three-step sequence.
+
+- **Phase 1:** Reads patched File 13, queries live CDGC for all scanned columns, builds `15_DQ_Rule_Occurrence.xlsx` with correct Primary Data Element paths
+- **Phase 2:** Shows a preview table and prompts CONFIRM before proceeding
+- **Phase 3:** Imports File 15 via API (polls to COMPLETED), then PATCHes all `relatedRuleTemplateRuleInstance` relationships
+
+Run after MCC scan — PDE paths require post-scan catalog data.
 
 **Run:** `python3 cdgc_create_dq_occurrences.py`
+
+**Re-run after changes:** Delete existing occurrences first (`cdgc_delete_dq_occurrences.py`), then re-run.
 
 ---
 
 ### `link_dq_templates_to_occurrences.py`
-**Link DQ Rule Templates to occurrences.** Sets the `relatedRuleTemplateRuleInstance` relationship for all 40 templates across 77 occurrences via PATCH API. Name-based matching (many-to-one). Idempotent — safe to re-run.
+**Standalone link script (fallback).** Sets the `relatedRuleTemplateRuleInstance` relationship via PATCH API — use this only if Phase 3 of `cdgc_create_dq_occurrences.py` failed after File 15 was already imported. Name-based many-to-one matching from Files 13 + 15. Idempotent — safe to re-run.
 
 **Run:** `python3 link_dq_templates_to_occurrences.py`
 

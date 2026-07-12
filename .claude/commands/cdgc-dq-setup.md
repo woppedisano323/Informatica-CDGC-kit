@@ -109,7 +109,7 @@ Written: 13_DQ_Rule_Template_PATCHED.xlsx
 ## Step 4 — Import patched template
 
 ```bash
-python3 ~/Documents/CDGC/cdgc_import_single.py
+python3 ~/Documents/CDGC/cdgc_import.py
 → ~/Downloads/CDGC_Import_<ClientName>/13_DQ_Rule_Template_PATCHED.xlsx
 ```
 
@@ -119,79 +119,67 @@ Wait for **COMPLETED** status. All rules in CDGC now have ICDQ references and co
 
 ---
 
-## Step 5 — Generate DQ Rule Occurrences (File 15)
+## Step 5 — Generate, import, and link occurrences
 
 ```bash
 python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
 ```
 
-**What it accomplishes:** File 13 defines *what* to measure. File 15 defines *where* — one row per rule/column combination. Each row tells MCC: "run this ICDQ rule against this exact Snowflake column." Without File 15, MCC has nothing to execute.
+This single script runs three phases automatically after a CONFIRM prompt:
 
-**Why it cannot be done manually:** The `Primary Data Element` field requires post-scan catalog data — the exact Catalog Source Name registered in MCC plus the `DB/Schema/Table/Column` path as scanned. These values don't exist in any downloadable template.
+**Phase 1 — Generate File 15 (DQ Rule Occurrences)**
 
-The script queries the live CDGC catalog, resolves the Catalog Source Name from the UUID in `core.location`, and constructs each PDE path dynamically.
+File 13 defines *what* to measure. File 15 defines *where* — one row per rule/column combination. Each row tells MCC: "run this ICDQ rule against this exact Snowflake column." Without File 15, MCC has nothing to execute.
 
-Expected output:
+The `Primary Data Element` field requires post-scan catalog data — the exact Catalog Source Name registered in MCC plus the `DB/Schema/Table/Column` path as scanned. These values don't exist in any downloadable template. The script queries the live CDGC catalog, resolves the Catalog Source Name from the UUID in `core.location`, and constructs each PDE path dynamically.
+
+**Phase 2 — Preview and confirm**
+
+After matching rules to columns, the script shows a preview table and asks:
 ```
-✓ Authenticated
-Found 40 DQ Rule Templates
-Matching columns in CDGC...
-  Annual Income Positive → CUSTOMER_MASTER.ANNUAL_INCOME
-  Risk Tier Valid Value → CUSTOMER_MASTER.RISK_TIER
-  ...
-77 occurrences written to 15_DQ_Rule_Occurrence.xlsx
-3 warnings (no column match — TAX_RESIDENCY, CTR_FLAG, KYC_VERIFIED_DATE not in schema)
-```
+This script will now:
+  1. Write   15_DQ_Rule_Occurrence.xlsx  (77 rows)
+  2. Import  via CDGC bulk import API (POST → poll to COMPLETED)
+  3. Link    77 template→occurrence relationships via PATCH API
 
-**Warnings** = a rule's Input Port Name found no matching column in the scanned schema. Expected if some rules target columns that don't exist in the Snowflake environment. Proceed unless warnings are unexpected.
-
----
-
-## Step 6 — Import occurrences
-
-```bash
-python3 ~/Documents/CDGC/cdgc_import_single.py
-→ ~/Downloads/CDGC_Import_<ClientName>/15_DQ_Rule_Occurrence.xlsx
+Proceed? [yes/no]:
 ```
 
-Wait for **COMPLETED** status.
+**Phase 3 — Import File 15 and link templates**
 
-**If PARTIAL_COMPLETED with empty detail:** Expected — rules with no matching column (from Step 5 warnings) produce rows that fail. All other rows are created. Not a blocker.
+After confirmation, the script:
+- Submits File 15 to the CDGC bulk import API and polls until COMPLETED
+- PATCHes all template→occurrence relationships (`relatedRuleTemplateRuleInstance`)
 
-**If hard FAILED:** PDE path not found. Verify the catalog source name in MCC matches exactly what the script used. Check `get_catalog_source_name.py` to debug name resolution.
+**Why linking is required:** Bulk import does not create the Rule Template → Rule Occurrence relationship. The Bulk Import template has no "Rule Template" column on the DQ Rule Occurrence sheet, and the Relationships Annexure has no `RuleTemplate→RuleInstance` entry. CDGC creates this link automatically only when `Enable Automation = true` — manually imported occurrences bypass automation. Without this link, the **Rule Template** field on every occurrence is blank in the CDGC UI.
 
----
+**Mapping:** Many-to-one. One template can cover multiple occurrences (the same rule may apply to matching columns across multiple tables). Matched by rule name — the part before ` — ` in the occurrence name.
 
-## Step 7 — Link templates to occurrences
-
-```bash
-python3 ~/Documents/CDGC/link_dq_templates_to_occurrences.py
+Expected final output:
+```
+Import:   COMPLETED
+Linked:   74 | Already linked: 3 | Failed: 0
 ```
 
-Sets the `relatedRuleTemplateRuleInstance` relationship between each DQ Rule Template and its occurrences. Without this, the **Rule Template** field on every occurrence is blank in the CDGC UI.
-
-**Why bulk import doesn't do this:** The Relationships Annexure has no `RuleTemplate→RuleInstance` entry. The Bulk Import template has no "Rule Template" column on the DQ Rule Occurrence sheet. CDGC creates this link automatically only when `Enable Automation = true` — manually imported occurrences bypass automation.
-
-**Mapping:** Many-to-one. One template can cover multiple occurrences (e.g., Annual Income Positive → occurrences across CUSTOMER_MASTER, CREDIT_RISK_IO, BEHAVIORAL_ANOMALY_IO). The script matches by rule name, not numeric index.
-
-Expected output:
-```
-Templates loaded: 40
-Occurrence pairs resolved: 77
-...
-Results: 74 linked | 3 already linked | 0 failed
-```
-
-**Verify before running MCC:**
+**Verify:**
 ```bash
 python3 ~/Documents/CDGC/audit_dq_links.py
 ```
+Reports OK / MISSING / EXTRA per template. All should show OK.
 
-Reports `✓ OK / ✗ MISSING / ⚠ EXTRA` for all templates. All should show OK. If any show MISSING, re-run the link script.
+**Warnings** = a rule's Input Port Name found no matching column in the scanned schema. Expected if some rules target columns not in the Snowflake environment. Those rows produce PARTIAL_COMPLETED on import — all other rows are created and linked. Not a blocker.
+
+**If you need to re-run:** Delete existing occurrences first, then re-run with Create (default):
+```bash
+python3 ~/Documents/CDGC/cdgc_delete_dq_occurrences.py
+python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
+```
+
+**Standalone fallback:** `link_dq_templates_to_occurrences.py` is available as a standalone script if you need to re-link without re-generating File 15 (e.g., after a partial failure in Phase 3).
 
 ---
 
-## Step 8 — Run MCC scan
+## Step 6 — Run MCC scan
 
 *Human action required — this step requires the MCC interface.*
 
@@ -224,7 +212,7 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 **If scores don't appear after the scan:**
 - Verify Measuring Method = `InformaticaCloudDataQuality` on the occurrence
 - Verify Technical Rule Reference is populated
-- Verify Rule Template field is populated (Step 7)
+- Verify Rule Template field is populated (Step 5 linked correctly)
 - Check MCC Jobs → DQ subtask completed (not just the Metadata Extraction task)
 
 **If an occurrence shows "Can't run the rule template — input ports not mapped to Glossary":**
@@ -238,7 +226,7 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Output port rejected on occurrence import | Output Port Name not exactly `Output` | Verify ICDQ rule output port name, re-run Steps 2–4 |
+| Output port rejected on occurrence import | Output Port Name not exactly `Output` | Verify ICDQ rule output port name in ICDQ, re-run Steps 2–4 |
 | link script shows HTTP 404 | Template reference ID doesn't exist | Confirm the template was imported; check the prefix matches |
 | link script shows HTTP 409 | Relationship already exists | Safe to ignore — script counts as skipped |
 | Wrong occurrences showing on template | Numeric 1:1 mapping was run first | Run `unlink_wrong_dq_template_links.py` then re-run link script |
@@ -254,9 +242,9 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 |--------|------|---------|
 | `fetch_icdq_rule_ids.py` | Step 2 | Fetch ICDQ artifact IDs via FRS API → icdq_rules.csv |
 | `patch_dq_template.py` | Step 3 | Patch File 13 with ICDQ refs, Output Port Name, Operation=Update |
-| `cdgc_import_single.py` | Steps 4, 6 | Import a single xlsx file, poll to completion |
-| `cdgc_create_dq_occurrences.py` | Step 5 | Generate File 15 from patched template + live CDGC catalog |
-| `link_dq_templates_to_occurrences.py` | Step 7 | Set template→occurrence relationships via PATCH API |
+| `cdgc_import.py` | Step 4 | Import a single xlsx file, poll to completion |
+| `cdgc_create_dq_occurrences.py` | Step 5 | **Three-phase pipeline:** generate File 15 → import via API → PATCH all template→occurrence links. Replaces the former Steps 5–7. |
+| `link_dq_templates_to_occurrences.py` | Fallback | Standalone link-only script — use if Phase 3 of Step 5 failed and File 15 is already imported |
 | `audit_dq_links.py` | Verify | Audit all templates — expected vs actual occurrence links |
 | `check_dq_links.py` | Verify | Spot-check a single template neighborhood |
 | `count_dq_occurrences.py` | Verify | Count all occurrences by prefix — confirm expected total before scan |
