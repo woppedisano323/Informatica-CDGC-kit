@@ -5,24 +5,32 @@ cdgc_snowflake_setup.py
 Creates CDGC demo schemas and loads realistic vertical-specific sample data
 into Snowflake for MCC catalog source scanning.
 
+Shared schema architecture — all verticals load into the same TEST_DB:
+
+  Vertical-specific schemas (one per vertical):
+    FCB_CORE        — Financial Services core tables
+    CLINICAL_CORE   — Healthcare core tables
+
+  Shared schemas (all verticals add tables here — no name collisions):
+    TRAINING_DATA   — ML feature tables (prefixed by vertical)
+    MODEL_REGISTRY  — AI model I/O tables + lineage views (prefixed by vertical)
+
 Supported verticals:
   1  Financial Services
-       Schemas: FCB_CORE, TRAINING_DATA, MODEL_REGISTRY
-       Tables:  CUSTOMER_MASTER, TRANSACTION_LEDGER, GL_ENTRY_REGISTER,
-                RISK_EXPOSURE_DAILY,
-                TRANSACTION_FEATURES, CUSTOMER_360_FEATURES,
-                RISK_EXPOSURE_FEATURES, REGULATORY_SUBMISSIONS_FEATURES,
-                FRAUD_DETECTOR_IO, BEHAVIORAL_ANOMALY_IO, AML_ANOMALY_IO,
-                CREDIT_RISK_IO, KYC_CLASSIFIER_IO, REGULATORY_VALIDATOR_IO,
-                CCAR_STRESS_IO
+       FCB_CORE:       CUSTOMER_MASTER, TRANSACTION_LEDGER, GL_ENTRY_REGISTER,
+                       RISK_EXPOSURE_DAILY
+       TRAINING_DATA:  TRANSACTION_FEATURES, CUSTOMER_360_FEATURES,
+                       RISK_EXPOSURE_FEATURES, REGULATORY_SUBMISSIONS_FEATURES
+       MODEL_REGISTRY: FRAUD_DETECTOR_IO, BEHAVIORAL_ANOMALY_IO, AML_ANOMALY_IO,
+                       CREDIT_RISK_IO, KYC_CLASSIFIER_IO, REGULATORY_VALIDATOR_IO,
+                       CCAR_STRESS_IO
 
   2  Healthcare
-       Schemas: CLINICAL_CORE, TRAINING_DATA, MODEL_REGISTRY
-       Tables:  PATIENT_DEMOGRAPHICS, CLINICAL_ENCOUNTERS, LAB_RESULTS,
-                MEDICATION_ORDERS, IMMUNIZATION_RECORDS, SDOH_ASSESSMENTS,
-                PHI_DISCLOSURE_LOG,
-                SEPSIS_RISK_FEATURES, NLP_DOCUMENT_CORPUS,
-                SEPSIS_RISK_IO, CLINICAL_NLP_IO
+       CLINICAL_CORE:  PATIENT_DEMOGRAPHICS, CLINICAL_ENCOUNTERS, LAB_RESULTS,
+                       MEDICATION_ORDERS, IMMUNIZATION_RECORDS, SDOH_ASSESSMENTS,
+                       PHI_DISCLOSURE_LOG
+       TRAINING_DATA:  SEPSIS_RISK_FEATURES, NLP_DOCUMENT_CORPUS
+       MODEL_REGISTRY: SEPSIS_RISK_IO, CLINICAL_NLP_IO
 
 Usage:
   python3 cdgc_snowflake_setup.py
@@ -1089,8 +1097,8 @@ def build_hc_clinical_nlp_io(n=300):
 
 
 HC_CORE_SCHEMA     = "CLINICAL_CORE"
-HC_TRAINING_SCHEMA = "TRAINING_DATA"
-HC_MODEL_SCHEMA    = "MODEL_REGISTRY"
+HC_TRAINING_SCHEMA = "TRAINING_DATA"   # shared with Financial Services
+HC_MODEL_SCHEMA    = "MODEL_REGISTRY"  # shared with Financial Services
 
 HC_CORE_VIEWS = {
     "PATIENT_CLINICAL_SUMMARY": """
@@ -1168,8 +1176,8 @@ def setup_healthcare(cur, db, scale):
     eids         = [e["ENCOUNTER_ID"] for e in encounters]
 
     _exec(cur, f"CREATE SCHEMA IF NOT EXISTS {db}.{HC_CORE_SCHEMA}")
-    _exec(cur, f"CREATE SCHEMA IF NOT EXISTS {db}.{HC_TRAINING_SCHEMA}")
-    _exec(cur, f"CREATE SCHEMA IF NOT EXISTS {db}.{HC_MODEL_SCHEMA}")
+    _exec(cur, f"CREATE SCHEMA IF NOT EXISTS {db}.{HC_TRAINING_SCHEMA}")   # shared — safe if already exists
+    _exec(cur, f"CREATE SCHEMA IF NOT EXISTS {db}.{HC_MODEL_SCHEMA}")      # shared — safe if already exists
 
     core_tables = {
         "PATIENT_DEMOGRAPHICS":  patients,
