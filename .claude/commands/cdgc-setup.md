@@ -85,7 +85,7 @@ Use Python + openpyxl to generate all 11 files. Follow every rule below exactly 
 - Boolean fields (`Critical Data Element`, `Enable Automation`) must be lowercase: `true` / `false`
 - Remove all empty sheets before saving — CDGC rejects files with header-only sheets
 - Do NOT include an Instructions or Annexure sheet
-- Reference IDs are required for relationships — always use a **customer-specific prefix** based on the customer name (e.g., `RKFDOM-1`, `RKFBT-1`, `RKFPOL-1`). Do NOT use CDGC's auto-generated prefixes (`DOM-`, `BT-`, `POL-`): they collide with system-generated IDs and are rejected on create.
+- Reference IDs are required for relationships — always derive a **customer-specific prefix** from the customer name initials (2–4 uppercase letters). Examples: "Maple Hills Network" → `MHN`, "First Capital Bank" → `FCB`, "Pacific Northwest Health" → `PNH`. Confirm the prefix with the user before generating files. Apply it consistently to ALL reference IDs across all 14 files using these stems: `{P}DOM-N`, `{P}SD-N`, `{P}REG-N`, `{P}POL-N`, `{P}LE-N`, `{P}BA-N`, `{P}GEO-N`, `{P}SYS-N`, `{P}AISYS-N`, `{P}AIM-N`, `{P}BT-N`, `{P}DS-N`, `{P}DQR-N`. Do NOT use CDGC's auto-generated prefixes (`DOM-`, `BT-`, `POL-`): they collide with system-generated IDs and are rejected on create.
 - Parent references use format `Display Name | Reference ID` (e.g., `Customer & KYC | RKFDOM-5`)
 - **Single parent rule:** CDGC enforces exactly one parent per asset. Populate only one parent column per row — leave all other parent columns blank. Violating this fails every row in the file with "There are multiple parents with this asset."
 - **Stakeholder columns** (`Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`) must contain a real email address of a user in the org. Blank or placeholder values block UI import entirely with no clear error message.
@@ -173,12 +173,13 @@ Columns: `Reference ID`, `Name`, `Description`, `Lifecycle`, `Operation`, `Paren
 #### Data Quality Rule Template
 Sheet name: `Data Quality Rule Template`
 Columns: `Reference ID`, `Name`, `Description`, `Criticality`, `Dimension`, `Enable Automation`, `Frequency`, `Input Port Name`, `Lifecycle`, `Measuring Method`, `Output Port Name`, `Technical Description`, `Technical Rule Reference`, `Target`, `Threshold`, `Primary Glossary`, `Secondary Glossary`, `Operation`, `Stakeholder: Governance Owner`, `Stakeholder: Governance Administrator`
+- **Column header is `Output Port Name` (correct English spelling). Use `DQ_RESULT` as the value for all rows — this is what the CDGC import engine expects. Do NOT use `Output` or `PASS_FAIL` as the value — those cause silent FAILED jobs with `tasks: []`.**
 - `Criticality` valid values: `High`, `Medium`, `Low`
-- `Dimension` valid values: `Accuracy`, `Validity`, `Completeness`, `Consistency`, `Uniqueness`, `Timeliness`
+- `Dimension` valid values: `Accuracy`, `Validity`, `Completeness`, `Consistency`, `Uniqueness`, `Timeliness` — do NOT use `Conformity` (rejected)
 - `Enable Automation`: `true` or `false`
-- `Frequency` valid values: `Hourly`, `Daily`, `Weekly`, `Monthly`, `On Demand` — do NOT use `Real-time` (rejected on import, causes PARTIAL_COMPLETED)
+- `Frequency` valid values: `Daily`, `Weekly`, `Monthly` ONLY — do NOT use `Hourly`, `On Demand`, or `Real-time` (all rejected on import)
 - `Measuring Method`: use `TechnicalScript` for demo environments — allows SQL/expression in `Technical Description`. Do NOT use `InformaticaCloudDataQuality` — it requires a `Technical Rule Reference` (a live CDQE rule ID from the org) and will fail without one.
-- `Target` / `Threshold`: numeric values only (e.g., `100`, `0`) — no percent sign
+- `Target` / `Threshold`: numeric values only (e.g., `100`, `0`) — no percent sign, no `%`
 - `Primary Glossary`: **name only** (e.g., `Social Security Number`) — do NOT use `Name | RefID` format (rejected). This links the DQ Rule to the Business Term; the relationship appears on both sides in the CDGC UI. DQ Rule Templates must be imported after Business Terms — glossary links are validated on import.
 
 #### Relationships
@@ -227,11 +228,11 @@ BCBS 239, CCAR, FATCA, BSA/AML, SOX, MiFID II, GDPR
 - Data Retention Policy (Technical Standards)
 - GL Reconciliation Policy (Business Rule)
 
-### Systems (4)
-- Core Banking System (Operational)
-- Risk Management Platform (Analytical)
-- Regulatory Reporting System (Reporting)
-- Data Warehouse (Analytical)
+### Systems (4) — use valid System Purpose values only
+- Core Banking System (System Purpose: `Core Client & Transaction Processing`)
+- Risk Management Platform (System Purpose: `Risk Function`)
+- Regulatory Reporting System (System Purpose: `Regulatory Reporting`)
+- Data Warehouse (System Purpose: `Warehouse & DataMart`)
 
 ### Data Sets (5)
 - Customer Master (Customer & KYC)
@@ -287,7 +288,12 @@ Use for hospitals, health systems, payers, and life sciences customers.
 - Compliance & Privacy: PHI Governance, Audit & Reporting
 
 #### Regulations (6)
-HIPAA, HITECH, CMS Conditions of Participation, FDA 21 CFR Part 11, HL7 FHIR, ICD-10
+- HIPAA Privacy Rule (Government Regulation, Issuing Body: U.S. Department of Health & Human Services)
+- HIPAA Security Rule (Government Regulation, Issuing Body: U.S. Department of Health & Human Services)
+- HITECH Act (Government Regulation, Issuing Body: U.S. Congress)
+- CMS Conditions of Participation (Government Regulation, Issuing Body: Centers for Medicare & Medicaid Services)
+- HL7 FHIR (Industry Standard, Issuing Body: Health Level Seven International)
+- ICD-10 (Industry Standard, Issuing Body: World Health Organization)
 
 #### Policies (5)
 - PHI Data Protection Policy (Conduct Standards)
@@ -296,11 +302,11 @@ HIPAA, HITECH, CMS Conditions of Participation, FDA 21 CFR Part 11, HL7 FHIR, IC
 - Data Retention & Disposal Policy (Technical Standards)
 - Breach Notification Policy (Business Rule)
 
-#### Systems (4)
-- Electronic Health Record (Operational)
-- Claims Management System (Operational)
-- Clinical Data Warehouse (Analytical)
-- Regulatory Reporting System (Reporting)
+#### Systems (4) — use valid System Purpose values only
+- Electronic Health Record (System Purpose: `Core Client & Transaction Processing`)
+- Claims Management System (System Purpose: `Core Client & Transaction Processing`)
+- Clinical Data Warehouse (System Purpose: `Warehouse & DataMart`)
+- Regulatory Reporting System (System Purpose: `Regulatory Reporting`)
 
 #### Data Sets (5)
 - Patient Master (Patient)
@@ -365,11 +371,11 @@ GDPR, CCPA, PCI-DSS, California Proposition 65, GS1 Standards
 - PCI Compliance Policy (Technical Standards)
 - Data Retention Policy (Technical Standards)
 
-#### Systems (4)
-- Point of Sale System (Operational)
-- E-Commerce Platform (Operational)
-- ERP / Inventory System (Operational)
-- Customer Data Platform (Analytical)
+#### Systems (4) — use valid System Purpose values only
+- Point of Sale System (System Purpose: `Core Client & Transaction Processing`)
+- E-Commerce Platform (System Purpose: `Core Client & Transaction Processing`)
+- ERP / Inventory System (System Purpose: `Master Data Management`)
+- Customer Data Platform (System Purpose: `Warehouse & DataMart`)
 
 #### Data Sets (5)
 - Customer Master (Customer)
@@ -425,7 +431,13 @@ Use for property & casualty, life, health insurance carriers, reinsurance, and i
 - Risk & Compliance: Actuarial Reserving, Regulatory Reporting
 
 #### Regulations (7)
-Solvency II, NAIC Model Laws, IFRS 17, State DOI Regulations, GDPR, CCPA, Anti-Money Laundering (AML)
+- Solvency II (Industry Standard, Issuing Body: European Insurance and Occupational Pensions Authority)
+- NAIC Model Laws (Industry Standard, Issuing Body: National Association of Insurance Commissioners)
+- IFRS 17 (Industry Standard, Issuing Body: International Accounting Standards Board)
+- State DOI Regulations (Government Regulation, Issuing Body: State Departments of Insurance)
+- GDPR (Government Regulation, Issuing Body: European Union)
+- CCPA (Government Regulation, Issuing Body: State of California)
+- Anti-Money Laundering (AML) (Government Regulation, Issuing Body: FinCEN / FATF)
 
 #### Policies (5)
 - Underwriting Data Quality Standards (Data Standards)
@@ -434,11 +446,11 @@ Solvency II, NAIC Model Laws, IFRS 17, State DOI Regulations, GDPR, CCPA, Anti-M
 - Actuarial Data Standards (Technical Standards)
 - Regulatory Reporting Policy (Business Rule)
 
-#### Systems (4)
-- Policy Administration System (Operational)
-- Claims Management System (Operational)
-- Actuarial Modeling Platform (Analytical)
-- Regulatory Reporting System (Reporting)
+#### Systems (4) — use valid System Purpose values only
+- Policy Administration System (System Purpose: `Core Client & Transaction Processing`)
+- Claims Management System (System Purpose: `Core Client & Transaction Processing`)
+- Actuarial Modeling Platform (System Purpose: `Risk Function`)
+- Regulatory Reporting System (System Purpose: `Regulatory Reporting`)
 
 #### Data Sets (5)
 - Policyholder Master (Customer)
@@ -494,7 +506,13 @@ Use for federal, state, and local government agencies, defense, and public utili
 - Compliance & Reporting: Regulatory Reporting, Audit & Oversight
 
 #### Regulations (7)
-FISMA, FedRAMP, OMB Circular A-123, NIST SP 800-53, Privacy Act of 1974, FOIA, ATO (Authority to Operate)
+- FISMA (Government Regulation, Issuing Body: U.S. Congress / NIST)
+- FedRAMP (Government Regulation, Issuing Body: U.S. General Services Administration)
+- OMB Circular A-123 (Government Regulation, Issuing Body: U.S. Office of Management and Budget)
+- NIST SP 800-53 (Industry Standard, Issuing Body: National Institute of Standards and Technology)
+- Privacy Act of 1974 (Government Regulation, Issuing Body: U.S. Congress)
+- FOIA (Government Regulation, Issuing Body: U.S. Congress)
+- ATO (Authority to Operate) (Industry Standard, Issuing Body: Federal Agency ISSO)
 
 #### Policies (5)
 - Data Quality Standards (Data Standards)
@@ -503,11 +521,11 @@ FISMA, FedRAMP, OMB Circular A-123, NIST SP 800-53, Privacy Act of 1974, FOIA, A
 - Federal Reporting Compliance Policy (Business Rule)
 - Data Access & Classification Policy (Technical Standards)
 
-#### Systems (4)
-- Case Management System (Operational)
-- Financial Management System (Operational)
-- Grants Management System (Operational)
-- Data Analytics Platform (Analytical)
+#### Systems (4) — use valid System Purpose values only
+- Case Management System (System Purpose: `Core Client & Transaction Processing`)
+- Financial Management System (System Purpose: `Finance Function`)
+- Grants Management System (System Purpose: `Core Client & Transaction Processing`)
+- Data Analytics Platform (System Purpose: `Warehouse & DataMart`)
 
 #### Data Sets (5)
 - Citizen Registry (Citizen Services)
@@ -563,7 +581,13 @@ Use for upstream exploration & production, midstream pipeline, downstream refini
 - Finance & Commercial: Production Accounting, Joint Venture Accounting
 
 #### Regulations (7)
-BSEE (Bureau of Safety and Environmental Enforcement), EPA Clean Air Act, EPA Clean Water Act, PHMSA Pipeline Safety Regulations, OSHA Process Safety Management (PSM), SEC Regulation S-X (oil & gas disclosures), EITI (Extractive Industries Transparency Initiative)
+- BSEE Regulations (Government Regulation, Issuing Body: Bureau of Safety and Environmental Enforcement)
+- EPA Clean Air Act (Government Regulation, Issuing Body: U.S. Environmental Protection Agency)
+- EPA Clean Water Act (Government Regulation, Issuing Body: U.S. Environmental Protection Agency)
+- PHMSA Pipeline Safety Regulations (Government Regulation, Issuing Body: Pipeline and Hazardous Materials Safety Administration)
+- OSHA Process Safety Management (Government Regulation, Issuing Body: Occupational Safety and Health Administration)
+- SEC Regulation S-X (Government Regulation, Issuing Body: U.S. Securities and Exchange Commission)
+- EITI Standard (Industry Standard, Issuing Body: Extractive Industries Transparency Initiative)
 
 #### Policies (5)
 - Asset Data Quality Standards (Data Standards)
@@ -572,11 +596,11 @@ BSEE (Bureau of Safety and Environmental Enforcement), EPA Clean Air Act, EPA Cl
 - Production Accounting Standards (Technical Standards)
 - Vendor & Contract Data Policy (Business Rule)
 
-#### Systems (4)
-- SCADA / Historian (Operational)
-- Enterprise Asset Management System (Operational)
-- Production Accounting System (Analytical)
-- HSE Management System (Reporting)
+#### Systems (4) — use valid System Purpose values only
+- SCADA / Historian (System Purpose: `Core Client & Transaction Processing`)
+- Enterprise Asset Management System (System Purpose: `Master Data Management`)
+- Production Accounting System (System Purpose: `Finance Function`)
+- HSE Management System (System Purpose: `Regulatory Reporting`)
 
 #### Data Sets (5)
 - Well Master (Assets & Operations)
@@ -632,7 +656,12 @@ Use for discrete manufacturing, process manufacturing, industrial equipment, aut
 - Supply Chain: Supplier Management, Inventory & Warehousing, Demand & Supply Planning
 
 #### Regulations (6)
-ISO 9001 (Quality Management), ISO 14001 (Environmental Management), OSHA General Industry Standards, EPA Toxic Release Inventory (TRI), ITAR (International Traffic in Arms Regulations), RoHS / REACH (hazardous substance restrictions)
+- ISO 9001 Quality Management (Industry Standard, Issuing Body: International Organization for Standardization)
+- ISO 14001 Environmental Management (Industry Standard, Issuing Body: International Organization for Standardization)
+- OSHA General Industry Standards (Government Regulation, Issuing Body: Occupational Safety and Health Administration)
+- EPA Toxic Release Inventory (Government Regulation, Issuing Body: U.S. Environmental Protection Agency)
+- ITAR (Government Regulation, Issuing Body: U.S. Department of State)
+- RoHS / REACH (Government Regulation, Issuing Body: European Union)
 
 #### Policies (5)
 - Product Data Quality Standards (Data Standards)
@@ -641,11 +670,11 @@ ISO 9001 (Quality Management), ISO 14001 (Environmental Management), OSHA Genera
 - Environmental & Compliance Data Policy (Conduct Standards)
 - Supplier Data Standards (Technical Standards)
 
-#### Systems (4)
-- ERP / Manufacturing Execution System (Operational)
-- Product Lifecycle Management System (Operational)
-- Quality Management System (Reporting)
-- Supply Chain Planning Platform (Analytical)
+#### Systems (4) — use valid System Purpose values only
+- ERP / Manufacturing Execution System (System Purpose: `Core Client & Transaction Processing`)
+- Product Lifecycle Management System (System Purpose: `Master Data Management`)
+- Quality Management System (System Purpose: `Regulatory Reporting`)
+- Supply Chain Planning Platform (System Purpose: `Warehouse & DataMart`)
 
 #### Data Sets (5)
 - Product Master (Product & Engineering)
