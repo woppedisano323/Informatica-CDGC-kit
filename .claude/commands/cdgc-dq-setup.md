@@ -225,6 +225,16 @@ TEST_DB.MHN_COMPLIANCE
 
 **Critical:** Re-editing a catalog source resets all capability checkboxes to defaults. Re-verify all 5 are checked after any configuration change before running.
 
+### Why MCC runs twice
+
+Two scans are required and this is by design — not a workaround.
+
+**Scan 1** (run before this skill) cataloged the customer's Snowflake schemas. Until that scan completed, the columns did not exist in CDGC. `cdgc_create_dq_occurrences.py` queries the live catalog to build PDE paths — it cannot run before Scan 1 because there is nothing to query.
+
+**Scan 2** (this step) executes the DQ rules. MCC reads the occurrences imported in Step 5, calls ICDQ for each one, and writes scores back to CDGC. Occurrences must be imported before this scan or MCC has nothing to execute.
+
+This ordering is the correct pattern for any real customer deployment — you do not control their Snowflake environment and do not know what columns exist until MCC discovers them. If a customer asks why two scans are needed, the answer is: the first scan discovers what exists, the second scan governs it.
+
 ### Run the scan
 
 Click **Run**. MCC reads each occurrence, calls ICDQ with the Technical Rule Reference ID, executes the rule against the Snowflake column, and writes the score back to CDGC.
