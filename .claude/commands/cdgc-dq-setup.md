@@ -187,7 +187,7 @@ Before running the scan, verify the catalog source has the correct capabilities 
 
 MCC → Catalog Sources → your catalog source → **Edit**
 
-### Capabilities — enable exactly these 6:
+### Capabilities — enable exactly these 5:
 
 | Capability | Enable | Notes |
 |---|---|---|
@@ -196,7 +196,7 @@ MCC → Catalog Sources → your catalog source → **Edit**
 | Data Quality | ✓ | Executes ICDQ rules — requires Profiling ON |
 | Data Classification | ✓ | Auto-detects PII/PHI (SSN, DOB, email) |
 | Glossary Association | ✓ | Auto-links columns to Business Terms |
-| Relationship Discovery | ✓ | Auto-discovers table relationships |
+| Relationship Discovery | — | Skip — requires an inference model to be configured first |
 | Lineage Discovery | — | Skip — no views/stored procs in demo schema |
 | Data Observability | — | Skip — needs multiple scan runs to build baseline |
 | Writeback | — | Skip — can modify Snowflake; risky for demo |
