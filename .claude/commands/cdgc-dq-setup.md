@@ -64,44 +64,44 @@ Type **`done`** when all rules are built and output ports verified.
 ## Step 2 — Fetch ICDQ rule IDs
 
 ```bash
-python3 ~/Documents/CDGC/fetch_icdq_rule_ids.py
+python3 ~/Documents/CDGC/fetch_icdq_rule_ids.py --client <client> --csv
 ```
 
-Prompts for IDMC credentials. Navigates the FRS API to your project folder and writes `icdq_rules.csv` with each rule name and its artifact ID.
+Replace `<client>` with the config name (e.g., `mhn`, `fcb`). Loads FRS host, project, and folder from `clients/<client>.json` — no manual prompts. Writes `icdq_rules.csv` to the script directory.
 
 **Auth note:** FRS API requires `IDS-SESSION-ID` header — JWT Bearer returns an HTML redirect. The script handles this automatically.
 
 Expected output:
 ```
-✓ Authenticated (FRS)
-Project: Acme_Financial_Demo → Folder: Acme Financial
-Found 35 rules
-Written: icdq_rules.csv
+✓ Loaded config: Meridian Health Network
+✓ Authenticated
+Project: MHN_Healthcare_Demo → Folder: Meridian Healthcare Network
+Found 11 rules
+✓ Written to .../icdq_rules.csv
 ```
 
-**If project/folder not found:** Check that the project and folder names match exactly what's in ICDQ (case-sensitive). The script prompts for both at startup.
+**If project/folder not found:** Names are case-sensitive. Verify exact spelling in ICDQ before re-running.
 
 ---
 
 ## Step 3 — Patch the DQ Rule Template
 
 ```bash
-python3 ~/Documents/CDGC/patch_dq_template.py
+python3 ~/Documents/CDGC/patch_dq_template.py --client <client>
 ```
 
 Reads `icdq_rules.csv` and updates `13_DQ_Rule_Template.xlsx`:
 - `Measuring Method` → `InformaticaCloudDataQuality`
 - `Technical Rule Reference` → ICDQ artifact ID
-- `Output Port Name` → `Output`
+- `Output Port Name` → `DQ_RESULT`
 - `Operation` → `Update`
 
-Writes `13_DQ_Rule_Template_PATCHED.xlsx`. Rules with no ICDQ equivalent remain as `TechnicalScript`.
+Shows a proposed match table and requires you to type `CONFIRM` before writing. Writes `13_DQ_Rule_Template_PATCHED.xlsx`. Rules with no ICDQ equivalent remain as `TechnicalScript`.
 
 Expected output:
 ```
-Patched: 35 rules → InformaticaCloudDataQuality
-Skipped: 5 rules → no ICDQ match (TechnicalScript)
-Written: 13_DQ_Rule_Template_PATCHED.xlsx
+Matched: 11   Left as TechnicalScript: 4
+✓ Saved: .../13_DQ_Rule_Template_PATCHED.xlsx
 ```
 
 ---
@@ -109,20 +109,20 @@ Written: 13_DQ_Rule_Template_PATCHED.xlsx
 ## Step 4 — Import patched template
 
 ```bash
-python3 ~/Documents/CDGC/cdgc_import.py
+python3 ~/Documents/CDGC/cdgc_import_single.py
 → ~/Downloads/CDGC_Import_<ClientName>/13_DQ_Rule_Template_PATCHED.xlsx
 ```
 
 Wait for **COMPLETED** status. All rules in CDGC now have ICDQ references and correct Output Port Names.
 
-**If PARTIAL_COMPLETED:** Some rows exist as `Create` but are already present. Run `fix_dq_template_operations.py` to force all rows to `Operation=Update`, then re-import.
+**If PARTIAL_COMPLETED:** Some rows exist as `Create` but are already present. Force all rows to `Operation=Update` in the xlsx and re-import.
 
 ---
 
 ## Step 5 — Generate, import, and link occurrences
 
 ```bash
-python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
+python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py --client <client>
 ```
 
 This single script runs three phases automatically after a CONFIRM prompt:
@@ -179,17 +179,52 @@ python3 ~/Documents/CDGC/cdgc_create_dq_occurrences.py
 
 ---
 
-## Step 6 — Run MCC scan
+## Step 6 — Verify MCC catalog source settings
 
-*Human action required — this step requires the MCC interface.*
+*Human action required — MCC configuration is GUI only.*
 
-1. Open **Metadata Command Center** → Catalog Sources → your catalog source
-2. Confirm **Data Quality** capability is enabled (Edit → Capabilities → Data Quality = ✓)
-3. Click **Run**
+Before running the scan, verify the catalog source has the correct capabilities enabled.
 
-MCC reads each occurrence, calls ICDQ with the Technical Rule Reference ID, executes the rule against the Snowflake column, and writes the score back to CDGC.
+MCC → Catalog Sources → your catalog source → **Edit**
 
-Scan takes 3–10 minutes depending on row count. Monitor progress in **MCC → Jobs**.
+### Capabilities — enable exactly these 6:
+
+| Capability | Enable | Notes |
+|---|---|---|
+| Metadata Extraction | ✓ | Tables/columns — required |
+| Data Profiling | ✓ | Row counts, null %, distinct values — **required for DQ scores to appear** |
+| Data Quality | ✓ | Executes ICDQ rules — requires Profiling ON |
+| Data Classification | ✓ | Auto-detects PII/PHI (SSN, DOB, email) |
+| Glossary Association | ✓ | Auto-links columns to Business Terms |
+| Relationship Discovery | ✓ | Auto-discovers table relationships |
+| Lineage Discovery | — | Skip — no views/stored procs in demo schema |
+| Data Observability | — | Skip — needs multiple scan runs to build baseline |
+| Writeback | — | Skip — can modify Snowflake; risky for demo |
+
+### Runtime environment
+
+Data Profiling requires a **Dedicated Secure Agent** — it does not work with:
+- Hosted Agent (serverless) — profiling not supported
+- Shared Secure Agent — results write to wrong org context
+
+If only a hosted or shared agent is available, DQ score tabs will remain empty after the scan. Escalate to your org admin before proceeding.
+
+### Schema filter
+
+Confirm the filter covers all client schemas, e.g. for MHN:
+```
+TEST_DB.MHN_CLINICAL
+TEST_DB.MHN_AI
+TEST_DB.MHN_COMPLIANCE
+```
+
+**Critical:** Re-editing a catalog source resets all capability checkboxes to defaults. Re-verify all 5 are checked after any configuration change before running.
+
+### Run the scan
+
+Click **Run**. MCC reads each occurrence, calls ICDQ with the Technical Rule Reference ID, executes the rule against the Snowflake column, and writes the score back to CDGC.
+
+Scan takes 5–15 minutes with Profiling + DQ enabled. Monitor progress in **MCC → Jobs**.
 
 Type **`done`** when the scan completes.
 
@@ -232,6 +267,9 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 | Wrong occurrences showing on template | Numeric 1:1 mapping was run first | Run `unlink_wrong_dq_template_links.py` then re-run link script |
 | Occurrence import FAILED | PDE path invalid | Verify catalog source name; re-generate File 15 after checking |
 | No DQ scores after scan | Missing occurrence→template link | Run audit_dq_links.py; re-run link script for any MISSING |
+| No DQ scores after scan | Data Profiling not enabled on catalog source | Edit catalog source → enable Data Profiling → re-run scan |
+| Profiling tab empty after scan | Hosted or shared agent used | Data Profiling requires a dedicated Secure Agent — escalate to org admin |
+| Capabilities reset unexpectedly | Catalog source re-edited | Re-editing resets checkboxes — re-verify all 5 capabilities before every scan |
 | FRS API returns HTML redirect | Using JWT on FRS endpoint | fetch_icdq_rule_ids.py uses IDS-SESSION-ID by default — check script version |
 
 ---
