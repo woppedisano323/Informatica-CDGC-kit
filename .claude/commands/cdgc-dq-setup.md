@@ -21,12 +21,17 @@ Before we start, confirm:
   ✓ ICDQ enabled in your org with a project and folder for this client
   ✓ MCC catalog source configured and at least one Snowflake scan completed
   ✓ Import files at: ~/Downloads/CDGC_Import_<ClientName>/
+  ✓ clients/<client>.json exists with catalog_source_name populated
 
 What is:
   1. The client name (e.g., Acme Financial)
   2. The ICDQ project name and folder name
-  3. Your IDMC login email
+  3. The MCC catalog source name (MCC → Catalog Sources — the display name)
+  4. Your IDMC login email
 ```
+
+Confirm that `clients/<client>.json` contains `catalog_source_name` before proceeding.
+The script will fail fast with a clear error if it is missing — do not skip this.
 
 Wait for the user's response before continuing.
 
