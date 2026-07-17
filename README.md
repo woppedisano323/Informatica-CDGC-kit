@@ -1,110 +1,177 @@
 # Informatica CDGC Kit
 
-A demo and deployment accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Generate a complete demo environment for any industry vertical in minutes, or build a production-ready import package directly from a client's actual governance documents. Includes a live 7-tab browser dashboard, API-based bulk import, and validated patterns for every asset type.
+A demo and deployment accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Build a complete governed demo environment for any industry vertical — including real DQ scores executed by ICDQ against live Snowflake data — with no manual data entry.
 
 ---
 
-## What do I need?
+## What can I do with this?
 
 | I want to… | Use this |
 |------------|----------|
-| Build a demo org for a vertical (no client docs) | `/cdgc-setup` skill |
+| Build a full CDGC demo for a vertical | `/cdgc-setup` skill |
+| Connect DQ rules to ICDQ and get real scores | `/cdgc-dq-setup` skill |
 | Build a demo from the client's actual documents | `/cdgc-client-setup` skill |
 | Wipe a demo org and start fresh | `/cdgc-wipe` skill |
-| See live governance data in a browser dashboard | `cdgc_dashboard.py` |
-| Import 14 Excel files via API (no manual UI clicks) | `cdgc_api_import.py` |
-| Check what's in a CDGC org right now | `cdgc_discover_classtypes.py` |
-| Debug a specific Business Term | `cdgc_check_bt.py` |
-| Diagnose a failed import job | `cdgc_job_detail.py` |
+| Import 14 Excel files via API (no UI clicks) | `cdgc_api_import_mhn.py` / `cdgc_import_single.py` |
+| Diagnose a failed import job | `check_job.py` |
 
 ---
 
-## Outputs at a glance
-
-| Artifact | Name | When to use |
-|----------|------|-------------|
-| `CDGC_<Company>_Preview.html` | Import Preview | Pre-import — browse all 14 files in a searchable viewer |
-| `CDGC_Review_Workbook_<PREFIX>_v1.html` | Review Workbook | Pre-import — action items, conflict flags, per-file review |
-| `cdgc_dashboard.py` (Flask, localhost:8080) | CDGC Live Dashboard | Post-import — real-time connection to your live CDGC org |
-
----
-
-## Quick Start — New to Terminal?
-
-See **[QUICK_START.md](QUICK_START.md)** for a step-by-step guide written for users who have never used Terminal or Python before.
-
----
-
-## Getting started (experienced users)
+## Getting started
 
 ```bash
-# 1. Clone and enter the repo
+# 1. Clone the repo
 git clone https://github.com/woppedisano323/Informatica-CDGC-kit.git
 cd Informatica-CDGC-kit
 
 # 2. Install Python dependencies (one time)
-pip install openpyxl pdfplumber python-docx requests flask
+pip install openpyxl requests
 
 # 3. Open in Claude Code
 claude .
 
-# 4. Use a skill — type any of these in the Claude Code prompt:
+# 4. Start with a skill
 /cdgc-setup
-/cdgc-client-setup
-/cdgc-wipe
 ```
 
 ---
 
 ## Skills
 
-All skills live in `.claude/commands/` and are **auto-loaded** when you open this repo in Claude Code. No install required.
+Skills live in `.claude/commands/` and are auto-loaded when you open this repo in Claude Code.
 
 | Skill | What it does |
 |-------|-------------|
-| `/cdgc-setup` | Generate a full CDGC demo environment for any industry vertical — no client documents required. Produces 14 ready-to-import Excel files plus two interactive HTML viewers: a file browser and a Review Workbook with action items and issue tracking. |
-| `/cdgc-client-setup` | Build a CDGC environment from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries. Parses, scores confidence, generates a Review Workbook, then produces 14 import files and two interactive HTML viewers. |
-| `/cdgc-wipe` | Wipe all governance assets from a CDGC org before reloading. Deletes in dependency order, requires explicit confirmation. |
-
-**Full skills reference:** [SKILLS_REFERENCE.md](.claude/commands/SKILLS_REFERENCE.md)
-
----
-
-## Python scripts
-
-| Script | What it does |
-|--------|-------------|
-| `cdgc_dashboard.py` | Live 7-tab browser dashboard — asset counts, governance health score, business glossary, policies, DQ rules, AI assets, workflow orchestration, and API explorer. Run: `python3 .claude/commands/cdgc_dashboard.py` |
-| `cdgc_api_import.py` | Authenticates to IDMC and imports all 14 Excel files in order via REST API. Polls for completion and verifies asset counts. Run: `python3 .claude/commands/cdgc_api_import.py` |
-| `cdgc_wipe.py` | Wipes all governance assets via API. Same logic as `/cdgc-wipe` skill but runs standalone. Run: `python3 .claude/commands/cdgc_wipe.py` |
-| `cdgc_discover_classtypes.py` | Queries the CDGC API and prints a count of all asset types. Use before/after import to confirm org state. Run: `python3 .claude/commands/cdgc_discover_classtypes.py` |
-| `cdgc_check_bt.py` | Fetches full details for a single Business Term by externalId. Useful for debugging field values. Run: `python3 .claude/commands/cdgc_check_bt.py` |
-| `cdgc_job_detail.py` | Fetches full detail on a failed import job. Run when an import shows errors to see exactly what failed. Run: `python3 .claude/commands/cdgc_job_detail.py` |
-| `install_cdgc_deps.sh` | Installs all required Python packages in one step. Run: `bash .claude/commands/install_cdgc_deps.sh` |
+| `/cdgc-setup` | Generate a full CDGC demo environment for any industry vertical. Produces 14 ready-to-import Excel files covering Domains, Business Terms, Policies, Regulations, Systems, AI Assets, Data Sets, and DQ Rule Templates. |
+| `/cdgc-dq-setup` | Deploy the full DQ execution pipeline — connects DQ Rule Templates to ICDQ rules, generates and imports Rule Occurrences, links templates to occurrences, and configures MCC to execute and score them automatically. Produces real DQ scores in CDGC. |
+| `/cdgc-client-setup` | Build a CDGC environment from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries. |
+| `/cdgc-wipe` | Wipe all governance assets from a CDGC org before reloading. Deletes in dependency order with explicit confirmation. |
 
 ---
 
-## Sample import files
+## End-to-end flow
 
-`sample_imports/` contains a complete set of 14 pre-built Excel files for a Financial Services demo org. Use these to test the import flow without running a skill first.
+### Phase 1 — Governance layer
+
+```
+/cdgc-setup  →  14 Excel files generated  →  imported into CDGC via API
+```
+
+Covers all governance asset types: Domains, Subdomains, Regulations, Policies, Legal Entities,
+Business Areas, Geographies, Systems, AI Systems, AI Models, Business Terms, Data Sets,
+DQ Rule Templates, and Relationships.
+
+### Phase 2 — Technical metadata
+
+```
+cdgc_snowflake_setup.py  →  Snowflake tables + sample data loaded
+MCC Scan 1  →  columns cataloged in CDGC
+```
+
+### Phase 3 — DQ execution pipeline
+
+```
+/cdgc-dq-setup
+  → Claire builds ICDQ rules
+  → fetch_icdq_rule_ids.py --client <client>   (fetches artifact IDs)
+  → patch_dq_template.py --client <client>     (patches File 13 with ICDQ refs)
+  → cdgc_import_single.py                      (imports patched File 13)
+  → cdgc_create_dq_occurrences.py --client <client>  (generates + imports File 15, links templates)
+  → MCC Scan 2  →  ICDQ rules execute  →  real scores in CDGC
+```
+
+**Why two MCC scans?** Scan 1 discovers what columns exist. File 15 (occurrences) maps rules to those columns — it can only be generated after Scan 1. Scan 2 executes the rules. This is the correct pattern for any real customer deployment.
 
 ---
 
-## Guides
+## Client config system
 
-| Guide | What it covers |
-|-------|---------------|
-| [QUICK_START.md](QUICK_START.md) | Step-by-step for users new to Terminal and Python |
-| [SKILLS_REFERENCE.md](.claude/commands/SKILLS_REFERENCE.md) | Full reference for all three skills — inputs, outputs, options, troubleshooting |
-| [CDGC_Demo_Setup_Guide.md](.claude/commands/CDGC_Demo_Setup_Guide.md) | Deep dive on `/cdgc-setup` — verticals, asset counts, import order, API import |
-| [CDGC_Client_Setup_Guide.md](.claude/commands/CDGC_Client_Setup_Guide.md) | Deep dive on `/cdgc-client-setup` — workflow paths, resume flow, document tips, troubleshooting |
-| [CDGC_Dashboard_Guide.md](.claude/commands/CDGC_Dashboard_Guide.md) | Running the live dashboard — tabs, workflows, API explorer |
+Each client environment is defined in `clients/<client>.json`. All scripts accept `--client <name>` — no manual prompts for hostnames, project names, directories, or prefixes.
+
+```json
+{
+  "client_name": "Meridian Health Network",
+  "prefix": "MHN",
+  "frs_host": "usw1.dmp-us.informaticacloud.com",
+  "icdq_project": "MHN_Healthcare_Demo",
+  "icdq_folder": "Meridian Healthcare Network",
+  "import_dir": "~/Downloads/CDGC_Import_MeridianHealthNetwork/",
+  "occurrence_prefix": "MHNDQO",
+  "catalog_source_name": "MHN_Healthcare_Snowflake",
+  "snowflake_database": "TEST_DB",
+  "snowflake_schemas": ["MHN_CLINICAL", "MHN_AI", "MHN_COMPLIANCE"]
+}
+```
+
+To add a new client: copy an existing config from `clients/`, update the values, and save as `clients/<client>.json`.
+
+---
+
+## Industry verticals
+
+| Vertical | Schemas | Story |
+|----------|---------|-------|
+| Financial Services | Core banking, training data, model registry | AML/KYC, credit risk, regulatory reporting (BCBS 239, CCAR, FATCA) |
+| Healthcare | Clinical, AI, compliance | HEDIS quality measures + AI governance (sepsis risk, readmission prediction, medication adherence) aligned to ONC HTI-1 |
+
+Pre-built demo templates for both verticals are in `demo_templates/`.
+
+---
+
+## Scripts reference
+
+| Script | Purpose |
+|--------|---------|
+| `cdgc_snowflake_setup.py` | Load sample data into Snowflake — Financial Services or Healthcare vertical. Use `--drop` to reset. |
+| `fetch_icdq_rule_ids.py` | Fetch ICDQ rule artifact IDs via FRS API → `icdq_rules.csv`. Use `--client` and `--csv`. |
+| `patch_dq_template.py` | Patch File 13 with ICDQ artifact IDs, Output Port Name, and Operation=Update. Use `--client`. |
+| `cdgc_create_dq_occurrences.py` | Three-phase pipeline: generate File 15 → import via API → link all template→occurrence relationships. Use `--client`. |
+| `cdgc_import_single.py` | Import any single xlsx file into CDGC and poll for completion. |
+| `cdgc_api_import_mhn.py` | Import all 14 MHN files in order via API. |
+| `audit_dq_links.py` | Audit all DQ Rule Templates — expected vs actual occurrence links. Use `--client`. |
+| `count_dq_occurrences.py` | Count all occurrences by prefix in CDGC. Confirm expected total before MCC scan. |
+| `link_dq_templates_to_occurrences.py` | Standalone link script — use if Phase 3 of `cdgc_create_dq_occurrences.py` failed. |
+| `cdgc_delete_dq_occurrences.py` | Delete all occurrences by prefix via REST API. Run before re-importing with Operation=Create. |
+| `unlink_wrong_dq_template_links.py` | Remove incorrect template→occurrence links before re-linking. |
+| `cdgc_wipe.py` | Delete all governance assets from a CDGC org in dependency order. |
+| `check_job.py` | Fetch full JSON for a CDGC import job by ID. Use to diagnose FAILED imports. |
+
+---
+
+## MCC catalog source settings
+
+For any client, enable exactly these 5 capabilities:
+
+| Capability | Enable |
+|---|---|
+| Metadata Extraction | ✓ |
+| Data Profiling | ✓ |
+| Data Quality | ✓ |
+| Data Classification | ✓ |
+| Glossary Association | ✓ |
+| Relationship Discovery | — (requires inference model) |
+| Lineage Discovery | — |
+| Data Observability | — |
+| Writeback | — |
+
+**Critical:** Data Profiling requires a **Dedicated Secure Agent** — not a Hosted Agent (serverless) or shared agent. Without it, DQ score tabs remain empty after the scan.
 
 ---
 
 ## Prerequisites
 
-- Python 3.8+
-- Claude Code (free at [claude.ai/code](https://claude.ai/code))
-- An Informatica Cloud (IDMC) org with CDGC enabled
-- IDMC username and password (entered at runtime — never stored in files)
+- Python 3.8+ with `openpyxl` and `requests` installed
+- Claude Code ([claude.ai/code](https://claude.ai/code))
+- Informatica Cloud (IDMC) org with CDGC and ICDQ enabled
+- MCC catalog source configured and pointed at your Snowflake environment
+- Dedicated Secure Agent (required for Data Profiling + DQ execution)
+- IDMC credentials — entered at runtime, never stored in files
+
+---
+
+## Guides
+
+| Guide | Location |
+|-------|----------|
+| DQ + ICDQ + MCC Deployment Guide | `docs/DQ_ICDQ_Deployment_Guide.md` |
+| Skills Reference | `.claude/commands/SKILLS_REFERENCE.md` |
