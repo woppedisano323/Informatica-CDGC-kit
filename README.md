@@ -1,6 +1,6 @@
 # Informatica CDGC Kit
 
-A demo and deployment accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Build a complete governed demo environment for any industry vertical — including real DQ scores executed by ICDQ against live Snowflake data — with no manual data entry.
+An accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Stand up a complete governed environment for any industry vertical — including real DQ scores executed by ICDQ against live Snowflake data — with no manual data entry. Use it for demo environments or to accelerate real client onboarding.
 
 ---
 
@@ -8,11 +8,11 @@ A demo and deployment accelerator for Informatica Cloud Data Governance & Catalo
 
 | I want to… | Use this |
 |------------|----------|
-| Build a full CDGC demo for a vertical | `/cdgc-setup` skill |
+| Build a full CDGC environment for a vertical | `/cdgc-setup` skill |
 | Connect DQ rules to ICDQ and get real scores | `/cdgc-dq-setup` skill |
-| Build a demo from the client's actual documents | `/cdgc-client-setup` skill |
-| Wipe a demo org and start fresh | `/cdgc-wipe` skill |
-| Import 14 Excel files via API (no UI clicks) | `cdgc_api_import_mhn.py` / `cdgc_import_single.py` |
+| Accelerate onboarding from client's own documents | `/cdgc-client-setup` skill |
+| Wipe an org and start fresh | `/cdgc-wipe` skill |
+| Import 14 Excel files via API (no UI clicks) | `cdgc_import_single.py` |
 | Diagnose a failed import job | `check_job.py` |
 
 ---
@@ -42,9 +42,9 @@ Skills live in `.claude/commands/` and are auto-loaded when you open this repo i
 
 | Skill | What it does |
 |-------|-------------|
-| `/cdgc-setup` | Generate a full CDGC demo environment for any industry vertical. Produces 14 ready-to-import Excel files covering Domains, Business Terms, Policies, Regulations, Systems, AI Assets, Data Sets, and DQ Rule Templates. |
+| `/cdgc-setup` | Generate a complete CDGC environment for any industry vertical. Produces 14 ready-to-import Excel files covering Domains, Business Terms, Policies, Regulations, Systems, AI Assets, Data Sets, and DQ Rule Templates. |
 | `/cdgc-dq-setup` | Deploy the full DQ execution pipeline — connects DQ Rule Templates to ICDQ rules, generates and imports Rule Occurrences, links templates to occurrences, and configures MCC to execute and score them automatically. Produces real DQ scores in CDGC. |
-| `/cdgc-client-setup` | Build a CDGC environment from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries. |
+| `/cdgc-client-setup` | Accelerate client onboarding from documents they already have — data dictionaries, policy PDFs, org charts, glossaries. Parses and scores confidence, generates a Review Workbook for human validation, then produces the 14 import files. |
 | `/cdgc-wipe` | Wipe all governance assets from a CDGC org before reloading. Deletes in dependency order with explicit confirmation. |
 
 ---
@@ -127,7 +127,6 @@ Pre-built demo templates for both verticals are in `demo_templates/`.
 | `patch_dq_template.py` | Patch File 13 with ICDQ artifact IDs, Output Port Name, and Operation=Update. Use `--client`. |
 | `cdgc_create_dq_occurrences.py` | Three-phase pipeline: generate File 15 → import via API → link all template→occurrence relationships. Use `--client`. |
 | `cdgc_import_single.py` | Import any single xlsx file into CDGC and poll for completion. |
-| `cdgc_api_import_mhn.py` | Import all 14 MHN files in order via API. |
 | `audit_dq_links.py` | Audit all DQ Rule Templates — expected vs actual occurrence links. Use `--client`. |
 | `count_dq_occurrences.py` | Count all occurrences by prefix in CDGC. Confirm expected total before MCC scan. |
 | `link_dq_templates_to_occurrences.py` | Standalone link script — use if Phase 3 of `cdgc_create_dq_occurrences.py` failed. |
