@@ -1,5 +1,5 @@
 ---
-description: Build a complete CDGC import package from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries, or Excel schemas. Produces a color-coded Review Workbook for approval, then generates all 14 import files that are easily imported directly into the Informatica CDGC product. Supports CSV, Excel (multi-tab), PDF, Word, and plain text. Detects cross-document conflicts. Three fallback modes: TODO markers (A), vertical defaults (B), or interactive gap interview (C).
+description: Build a complete CDGC import package from documents the client already has — data dictionaries, policy PDFs, org charts, glossaries, or Excel schemas. Produces a color-coded Review Workbook for approval, then generates all 14 import files plus a Claire-ready DQ rules file ({PREFIX}_IDQ_Rules.xlsx) ready to hand to ICDQ. Supports CSV, Excel (multi-tab), PDF, Word, and plain text. Detects cross-document conflicts. Three fallback modes: TODO markers (A), vertical defaults (B), or interactive gap interview (C).
 ---
 
 # CDGC Client-Driven Setup
@@ -102,7 +102,14 @@ To get started I need a few things:
      - System inventory or architecture doc (any format)
      - Regulatory or compliance framework docs (PDF or Word)
 
-4. Fallback preference when a field can't be inferred from your documents:
+4. DQ inputs — optional but improve rule recommendations (provide any you have):
+     - Sample rows — 10–100 rows of actual data (CSV or Excel)
+     - Profile results — null %, distinct count, min/max, top values (MCC export or manual)
+     - Existing DQ rule specs — any prior rule definitions, SLA docs, or data quality standards
+
+   If none provided, DQ rules will be generated from the schema and column names alone.
+
+5. Fallback preference when a field can't be inferred from your documents:
    A) Leave blank with a TODO marker — I'll fill it in manually
    B) Use vertical defaults for anything missing (I'll ask which vertical)
    C) Ask me — prompt me for each gap before generating
@@ -147,7 +154,14 @@ Write and execute a Python script that:
 
 4. **Builds a structured extraction dict** with candidates per asset type, ready for Step 2.
 
-5. **Identifies gaps** — asset types with no candidates found, or required columns with no data.
+5. **Extracts DQ signals** per column for use in Step 4c:
+   - From schema/DDL: column name, data type, nullable flag, primary key flag
+   - From sample rows: null rate, distinct count, min/max (numeric), format patterns (string), enum detection (distinct ≤ 20)
+   - From profile results: accept MCC export format (Table, Column, NullCount, DistinctCount, MinValue, MaxValue, TopValues) or any reasonable tabular format — infer column mapping by header name
+   - From existing DQ rule specs: extract rule name, target column(s), condition, severity, regulatory reference
+   - From policy/regulatory docs: map regulatory frameworks to column names where possible (e.g. HIPAA → PHI columns)
+
+6. **Identifies gaps** — asset types with no candidates found, or required columns with no data.
 
 Print a brief extraction summary:
 ```
@@ -404,6 +418,74 @@ Two interactive HTML viewers are now open alongside your Excel files:
 
 The Review Workbook opens on the Import Preview tab. Switch to Overview & TODOs to see
 all flagged items with checkboxes — resolve these before importing.
+```
+
+---
+
+## Step 4c — Generate Claire-ready DQ rules file
+
+After the 14 import files are written, generate `{PREFIX}_IDQ_Rules.xlsx` — the input file for Claire in ICDQ. This file contains one row per recommended DQ rule, with pre-drafted logic ready for Claire to implement.
+
+**File:** `{PREFIX}_IDQ_Rules.xlsx`
+**Location:** same directory as the 14 import files
+
+Rule names in this file **must exactly match** the `Name` column in `13_DQ_Rule_Template.xlsx` — `patch_dq_template.py` joins on this field downstream. Read File 13 after generating it and anchor rule names to what was written there.
+
+### Sheet 1: `DQ Rules` — 10 columns (exact order)
+
+| Column | Content |
+|--------|---------|
+| `Rule_ID` | Category prefix + sequence (e.g. `PAT-001`, `CUST-001`) — derived from domain grouping |
+| `Category` | Completeness / Validity / Consistency / Uniqueness / Timeliness |
+| `Rule_Name` | Exact match to `Name` in `13_DQ_Rule_Template.xlsx` |
+| `Description` | Plain-English description of what the rule validates and why it matters |
+| `Target_Fields` | Snowflake column name(s) the rule applies to |
+| `Rule_Logic` | Pre-drafted SQL expression. Mark `[REVIEW]` if derived from observed data range rather than a known constraint — SE must confirm before handing to Claire |
+| `Severity` | Critical / High / Medium / Low |
+| `Regulatory_Driver` | Framework mapped from policy docs (e.g. HIPAA, BCBS 239, SOX). Blank if none found. |
+| `Pass_Example` | Example of a passing value |
+| `Fail_Example` | Example of a failing value |
+
+### Sheet 2: `Summary` — rule count by dimension and confidence
+
+### Rule generation patterns — apply based on available signals
+
+| Signal | Rule type | Logic template |
+|--------|-----------|---------------|
+| Null rate > 0% on critical/PK/regulatory column | Completeness | `{COL} IS NOT NULL` |
+| Numeric min/max from profile or sample | Validity — range | `{COL} BETWEEN {min} AND {max}` — mark `[REVIEW]` |
+| String with consistent format in sample | Validity — format | Regex pattern (SSN, ICD-10, NPI, email, date, currency code) |
+| Distinct count ≤ 20 | Validity — valid values | `{COL} IN ('{val1}', '{val2}', ...)` — mark `[REVIEW]` |
+| Date column with event-type name | Validity — not future | `{COL} <= CURRENT_DATE()` |
+| ID/KEY column or distinct ≈ total rows | Uniqueness | `COUNT(*) = COUNT(DISTINCT {COL})` |
+| Two columns that should balance | Consistency | `{COL_A} = {COL_B}` or `{COL_A} <= {COL_B}` |
+
+### Color coding
+- White — high confidence, logic ready for Claire
+- Light yellow (`FFFFE0`) — medium confidence, review recommended
+- Light orange (`FFD580`) — logic derived from observed data range — SE must confirm valid range
+- Light red (`FFB3B3`) — low confidence or no signal — placeholder only
+
+### Rule_ID category prefixes
+
+Derive from the domain grouping in File 13. Common conventions:
+
+**Healthcare:** PAT (patient), ENC (encounters), LAB (lab results), MED (medications), AI (model outputs), PHI (compliance)
+
+**Financial Services:** CUST (customer/KYC), TXN (transactions), GL (general ledger), RISK (risk exposure), REG (regulatory), MDL (model outputs)
+
+For other verticals: derive 2–4 letter prefix from domain name, confirm with user.
+
+### After generating the file, print:
+
+```
+✓ Generated: {PREFIX}_IDQ_Rules.xlsx  ({N} rules)
+  Ready for Claire: {N}  (white + yellow rows)
+  Needs SE review:  {N}  (orange + red rows — confirm Rule_Logic before use)
+
+Rules with [REVIEW] flag:
+  [list columns where logic was derived from observed data, not known constraints]
+  [list enum sets that need validation against authoritative source]
 ```
 
 ---
@@ -737,18 +819,24 @@ This section records the actual test runs performed during skill development. It
 
 ## What's next — DQ execution
 
-Importing File 13 (DQ Rule Templates) creates rule *definitions* in CDGC, but no scores
-will ever appear until rules are connected to ICDQ and bound to specific catalog columns.
+This skill has generated `{PREFIX}_IDQ_Rules.xlsx` alongside the 14 import files. That file
+is the input to Claire in ICDQ — it contains all rule definitions with pre-drafted logic.
 
-**To complete the DQ pipeline, run:**
+**Complete the DQ pipeline in two steps:**
+
+**Step 1 — Build rules in ICDQ with Claire**
+Open ICDQ → navigate to your project folder → open Claire → provide all rules from
+`{PREFIX}_IDQ_Rules.xlsx` at once. Review any rows marked `[REVIEW]` before handing to Claire
+— confirm that range and valid-value rules reflect real constraints, not just observed data.
+
+**Step 2 — Deploy to CDGC**
 ```
 /cdgc-dq-setup
 ```
+Covers the full sequence: fetch ICDQ artifact IDs → patch File 13 → generate DQ Rule
+Occurrences (File 15) → import → link templates to occurrences → MCC scan → verify scores.
 
-This skill covers the full 6-step sequence: build ICDQ rules → patch templates → generate
-DQ Rule Occurrences (File 15) → import → link templates to occurrences → MCC scan → verify.
-
-DQ is the third pillar of the CDGC demo story — governance + technical metadata + data quality.
+DQ is the third pillar of the CDGC story — governance + technical metadata + data quality.
 
 ---
 

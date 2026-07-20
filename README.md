@@ -11,6 +11,7 @@ An accelerator for Informatica Cloud Data Governance & Catalog (CDGC). Stand up 
 | Build a full CDGC environment for a vertical | `/cdgc-setup` skill |
 | Connect DQ rules to ICDQ and get real scores | `/cdgc-dq-setup` skill |
 | Accelerate onboarding from client's own documents | `/cdgc-client-setup` skill |
+| Build standalone ICDQ rules (no CDGC required) | `/cdgc-dq-rules` skill |
 | Wipe an org and start fresh | `/cdgc-wipe` skill |
 | Import 14 Excel files via API (no UI clicks) | `cdgc_import_single.py` |
 | Diagnose a failed import job | `check_job.py` |
@@ -44,7 +45,8 @@ Skills live in `.claude/commands/` and are auto-loaded when you open this repo i
 |-------|-------------|
 | `/cdgc-setup` | Generate a complete CDGC environment for any industry vertical. Produces 14 ready-to-import Excel files covering Domains, Business Terms, Policies, Regulations, Systems, AI Assets, Data Sets, and DQ Rule Templates. |
 | `/cdgc-dq-setup` | Deploy the full DQ execution pipeline — connects DQ Rule Templates to ICDQ rules, generates and imports Rule Occurrences, links templates to occurrences, and configures MCC to execute and score them automatically. Produces real DQ scores in CDGC. |
-| `/cdgc-client-setup` | Accelerate client onboarding from documents they already have — data dictionaries, policy PDFs, org charts, glossaries. Parses and scores confidence, generates a Review Workbook for human validation, then produces the 14 import files. |
+| `/cdgc-client-setup` | Accelerate client onboarding from documents they already have — data dictionaries, policy PDFs, org charts, glossaries, sample data, profile results. Produces a Review Workbook, 14 import files, and a Claire-ready DQ rules file (`{PREFIX}_IDQ_Rules.xlsx`). |
+| `/cdgc-dq-rules` | Generate a Claire-ready DQ rules file from schema, sample rows, profile results, or existing rule specs — standalone, no CDGC required. Rules are published as ICDQ API endpoints callable from any source system. |
 | `/cdgc-wipe` | Wipe all governance assets from a CDGC org before reloading. Deletes in dependency order with explicit confirmation. |
 
 ---
