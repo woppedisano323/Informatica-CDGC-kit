@@ -14,6 +14,7 @@ Skills fall into three categories:
 | Category | Skills | Purpose |
 |----------|--------|---------|
 | **Setup** | `/cdgc-setup`, `/cdgc-client-setup`, `/cdgc-technical-setup`, `/cdgc-dq-setup` | Build and configure a full CDGC environment end-to-end |
+| **Standalone** | `/cdgc-dq-rules` | Generate Claire-ready DQ rules without CDGC dependency — ICDQ API endpoints callable from any source system |
 | **Maintenance** | `/cdgc-wipe` | Manage an existing org |
 | **Live (demo-only)** | `/cdgc-demo-live` | Demonstration scripts for use in front of a prospect — not for building environments |
 
@@ -56,7 +57,7 @@ Output: `~/Downloads/CDGC_Import_<ClientName>/`
 
 **Import order:** Always `01 → 14` in sequence. Wait for **COMPLETED** before uploading the next file.
 
-**Next step after import:** Run `/cdgc-dq-setup` to activate DQ execution.
+**Next step after import:** Run `/cdgc-dq-setup` to activate DQ execution. To generate standalone ICDQ rules callable from any source system without MCC, run `/cdgc-dq-rules`.
 
 **Full guide:** `CDGC_Demo_Setup_Guide.md`
 
@@ -95,7 +96,7 @@ Build a complete CDGC import package from documents the client already has — d
 | Mid-engagement: client provided docs after initial demo | `/cdgc-client-setup` |
 | Demonstrating the AI-assisted onboarding story | `/cdgc-client-setup` |
 
-**Next step after import:** Run `/cdgc-dq-setup` to activate DQ execution.
+**Next step after import:** Run `/cdgc-dq-setup` to activate DQ execution. To generate standalone ICDQ rules callable from any source system without MCC, run `/cdgc-dq-rules`.
 
 **Full guide:** `CDGC_Client_Setup_Guide.md`
 
@@ -154,6 +155,40 @@ All DQ scores produced by this skill are real — executed by ICDQ against live 
 
 ---
 
+## Standalone skills
+
+### `/cdgc-dq-rules`
+
+Generate a Claire-ready `{PREFIX}_IDQ_Rules.xlsx` file for clients who want ICDQ-powered data quality rules without the full CDGC governance layer. The output xlsx is handed directly to Claire in IDMC, which builds and runs the rules. Rules are published as API endpoints callable from any source system.
+
+**Invoke:** `/cdgc-dq-rules`
+
+**Use when:**
+- Client wants DQ rules callable from Databricks, Salesforce, or any custom app
+- Client has ICDQ but has not yet deployed CDGC
+- Rules need to run on demand outside the MCC scan cycle
+
+**Accepts:** Schema/DDL, sample rows, profile results, existing rule specs, policy docs
+
+**What it produces:** `{PREFIX}_IDQ_Rules.xlsx` — 10-column format ready for Claire
+
+| Column | Content |
+|--------|---------|
+| `Rule_ID` | Category prefix + sequence (e.g. `CUST-001`) |
+| `Category` | Completeness / Validity / Consistency / Uniqueness / Timeliness |
+| `Rule_Name` | Rule name — matches `Name` in File 13 when used with `/cdgc-dq-setup` |
+| `Rule_Logic` | Pre-drafted SQL expression — marked `[REVIEW]` if derived from observed data |
+| `Severity` | Critical / High / Medium / Low |
+| `Regulatory_Driver` | Mapped from policy docs (e.g. HIPAA, SOX) |
+
+**To connect to CDGC later:**
+1. Run `/cdgc-setup` or `/cdgc-client-setup` to import the governance layer
+2. Run `/cdgc-dq-setup` — skip Step 1 (rules already built), MCC scan in Step 6 writes scores to CDGC
+
+**Full guide:** `DQ_Rules_Generation_Guide.md`
+
+---
+
 ## Maintenance skills
 
 ### `/cdgc-wipe`
@@ -197,6 +232,13 @@ For a client-specific environment:
 /cdgc-client-setup    ← parse client docs, generate 14 files
 /cdgc-technical-setup ← technical metadata layer
 /cdgc-dq-setup        ← DQ execution pipeline
+```
+
+For standalone ICDQ rules (no CDGC required):
+```
+/cdgc-dq-rules        ← generate {PREFIX}_IDQ_Rules.xlsx → Claire builds rules in ICDQ
+                         rules publish as REST API endpoints callable from any source system
+                         (run /cdgc-setup + /cdgc-dq-setup later to connect to CDGC)
 ```
 
 ---

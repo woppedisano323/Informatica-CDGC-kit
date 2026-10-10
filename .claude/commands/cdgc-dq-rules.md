@@ -1,5 +1,5 @@
 ---
-description: Generate a Claire-ready DQ rules file from client schema, sample data, profile results, or existing rule specs — without any CDGC dependency. Rules are built in ICDQ and published as API endpoints callable from any source system (Databricks, Salesforce, custom apps). Use this when the client wants ICDQ-powered data quality without the full CDGC governance layer.
+description: Generate a Claire-ready DQ rules file from client schema, sample data, profile results, or existing rule specs — without any CDGC dependency. The output xlsx is handed directly to Claire in IDMC, which builds and runs the DQ rules. Rules are published as API endpoints callable from any source system (Databricks, Salesforce, custom apps). Use this when the client wants ICDQ-powered data quality without the full CDGC governance layer.
 ---
 
 # CDGC DQ Rules — Standalone
@@ -200,11 +200,14 @@ Next steps:
 
   1. Open {PREFIX}_IDQ_Rules.xlsx — review any [REVIEW] rows and confirm Rule_Logic
   2. Open ICDQ → create a project and folder for this client
-  3. Open Claire → provide all rule definitions from the DQ Rules sheet at once (not one by one)
-  4. For each rule Claire builds: verify the output port is named 'Output' exactly
+  3. In IDMC, open Claire and provide {PREFIX}_IDQ_Rules.xlsx directly — Claire reads the file
+     and builds the DQ rules. No manual transcription.
+  4. After Claire builds the rules: verify the output port is named 'Output' exactly
   5. In ICDQ API Center: enable each rule for API access
   6. Rules are now callable as REST endpoints from any source system
 
-To connect these rules to CDGC governance and get scores on every MCC scan instead,
-run /cdgc-client-setup — it generates the same rules file as part of the full 14-file package.
+To connect these rules to CDGC governance and get scores on every MCC scan:
+1. Run `/cdgc-setup` or `/cdgc-client-setup` to import the governance layer (14 files)
+2. Run `/cdgc-dq-setup` — when asked if rules are already built, answer yes to skip Step 1
+   The MCC scan in Step 6 is what executes the rules and writes scores back to CDGC.
 ```

@@ -1,5 +1,5 @@
 ---
-description: Connect CDGC DQ Rule Templates to ICDQ rules and configure MCC to execute them automatically. Produces real scored DQ Rule Occurrences in CDGC. Runs the full 8-step DQ deployment sequence interactively with automated steps and guided checkpoints for the two human-required actions (build rules in Claire, run MCC scan). Requires ICDQ enabled and MCC configured.
+description: Connect CDGC DQ Rule Templates to ICDQ rules and configure MCC to execute them automatically. Produces real scored DQ Rule Occurrences in CDGC. Runs the full 6-step DQ deployment sequence interactively with automated steps and guided checkpoints for the two human-required actions (build rules in Claire if not already done, run MCC scan). Requires ICDQ enabled and MCC configured.
 ---
 
 # CDGC DQ Rule Setup
@@ -22,6 +22,10 @@ Before we start, confirm:
   ✓ MCC catalog source configured and at least one Snowflake scan completed
   ✓ Import files at: ~/Downloads/CDGC_Import_<ClientName>/
   ✓ clients/<client>.json exists with catalog_source_name populated
+
+Do you already have ICDQ rules built in your project folder for this client?
+  → Yes — we'll skip Step 1 and start at Step 2 (verify output ports are named 'Output' first)
+  → No  — Step 1 will walk you through building them with Claire
 
 What is:
   1. The client name (e.g., Acme Financial)
@@ -49,7 +53,9 @@ If ICDQ is not yet enabled, contact your Informatica org administrator before pr
 
 *Human action required — this step cannot be automated.*
 
-File 13 contains all rule definitions: names, dimensions, and Input Port Names. Pass them to Claire in ICDQ to generate the actual rule logic.
+**If rules are already built in ICDQ** (e.g., generated via `/cdgc-dq-rules` or a previous session), skip to Step 2. Before continuing, verify the output port on each existing rule is named `Output` exactly.
+
+**If rules need to be built:** File 13 contains all rule definitions: names, dimensions, and Input Port Names. Pass them to Claire in ICDQ to generate the actual rule logic.
 
 1. Open **ICDQ** → navigate to your project folder
 2. Open **Claire** (AI assistant in ICDQ)
@@ -98,7 +104,7 @@ python3 ~/Documents/CDGC/patch_dq_template.py --client <client>
 Reads `icdq_rules.csv` and updates `13_DQ_Rule_Template.xlsx`:
 - `Measuring Method` → `InformaticaCloudDataQuality`
 - `Technical Rule Reference` → ICDQ artifact ID
-- `Output Port Name` → `DQ_RESULT`
+- `Output Port Name` → `Output`
 - `Operation` → `Update`
 
 Shows a proposed match table and requires you to type `CONFIRM` before writing. Writes `13_DQ_Rule_Template_PATCHED.xlsx`. Rules with no ICDQ equivalent remain as `TechnicalScript`.
@@ -192,7 +198,7 @@ Before running the scan, verify the catalog source has the correct capabilities 
 
 MCC → Catalog Sources → your catalog source → **Edit**
 
-### Capabilities — enable exactly these 5:
+### Capabilities — enable exactly these 5 (skip the rest):
 
 | Capability | Enable | Notes |
 |---|---|---|
@@ -295,7 +301,7 @@ Shows the neighborhood for a single template — confirms occurrence link and DQ
 |--------|------|---------|
 | `fetch_icdq_rule_ids.py` | Step 2 | Fetch ICDQ artifact IDs via FRS API → icdq_rules.csv |
 | `patch_dq_template.py` | Step 3 | Patch File 13 with ICDQ refs, Output Port Name, Operation=Update |
-| `cdgc_import.py` | Step 4 | Import a single xlsx file, poll to completion |
+| `cdgc_import_single.py` | Step 4 | Import a single xlsx file, poll to completion with per-task breakdown |
 | `cdgc_create_dq_occurrences.py` | Step 5 | **Three-phase pipeline:** generate File 15 → import via API → PATCH all template→occurrence links. Replaces the former Steps 5–7. |
 | `link_dq_templates_to_occurrences.py` | Fallback | Standalone link-only script — use if Phase 3 of Step 5 failed and File 15 is already imported |
 | `audit_dq_links.py` | Verify | Audit all templates — expected vs actual occurrence links |

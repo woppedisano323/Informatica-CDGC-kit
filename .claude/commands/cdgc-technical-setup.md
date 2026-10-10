@@ -299,9 +299,9 @@ executes ICDQ rules and writes real DQ scores back to CDGC.
 /cdgc-dq-setup
 ```
 
-This covers the complete 8-step sequence: build ICDQ rules in Claire → fetch artifact IDs
-→ patch File 13 → import → generate File 15 (DQ Rule Occurrences) → import occurrences
-→ link templates to occurrences → MCC scan → verify real scores.
+This covers the complete 6-step sequence: build ICDQ rules in Claire → fetch artifact IDs
+→ patch File 13 → import → generate File 15 / import occurrences / link templates (single script)
+→ verify MCC catalog source settings and run scan → verify real scores.
 
 All DQ scores in this pipeline are real — executed by ICDQ against live Snowflake data.
 

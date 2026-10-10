@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import an xlsx file into CDGC and poll for completion."""
+"""Import a single xlsx file into CDGC and poll for completion."""
 import getpass, requests, time, json, sys
 from pathlib import Path
 
@@ -52,7 +52,22 @@ while time.time() < deadline:
     status = data.get("status", "UNKNOWN")
     if status in terminal:
         print(f"\r  {status}          ")
-        if status != "COMPLETED":
+        tasks = data.get("tasks", [])
+        if tasks:
+            for t in tasks:
+                t_status = t.get("status","?")
+                t_name   = t.get("name") or t.get("type","?")
+                created  = t.get("createdCount",  t.get("created",  ""))
+                updated  = t.get("updatedCount",  t.get("updated",  ""))
+                skipped  = t.get("skippedCount",  t.get("skipped",  ""))
+                failed   = t.get("failedCount",   t.get("failed",   ""))
+                errors   = t.get("errors") or t.get("errorMessages") or []
+                print(f"  Task: {t_name} → {t_status}")
+                if any([created, updated, skipped, failed]):
+                    print(f"    created={created}  updated={updated}  skipped={skipped}  failed={failed}")
+                for e in (errors if isinstance(errors, list) else [errors])[:5]:
+                    print(f"    ✗ {str(e)[:200]}")
+        elif status != "COMPLETED":
             print(f"  Detail: {json.dumps(data.get('errors', data.get('detail', '')))[:500]}")
         break
     elapsed = int(time.time() - (deadline - 3600))

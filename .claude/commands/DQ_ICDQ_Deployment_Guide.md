@@ -8,8 +8,8 @@ Center (MCC) and surface real scores in CDGC.
 
 **Requires:** CDGC org, MCC catalog source configured, ICDQ enabled, Snowflake connection.
 
-**Proven:** 2026-07-10 — 40/40 DQ Rule Templates confirmed linked, real MCC→ICDQ scores
-confirmed across 3 occurrences. See `clients/FCB_Financial_Services.md` for full details.
+**Proven:** End-to-end validation confirmed — 40/40 DQ Rule Templates linked, real MCC→ICDQ scores
+confirmed. See `clients/` for environment-specific details.
 
 ---
 
@@ -293,9 +293,9 @@ File 13 (DQ Rule Template) **is** the pre-built ruleset. It already exists per v
 in the 14 import files. No separate ruleset artifact needed.
 
 SE workflow for a new engagement:
-1. Run `/cdgc-demo-live` or `/cdgc-client-setup-live` → imports 14 files including File 13
+1. Run `/cdgc-setup` or `/cdgc-client-setup` → imports 14 files including File 13
 2. Pass File 13 rule definitions to Claire in ICDQ → Claire builds all rule specs at once
-3. Follow Steps 2–7 above
+3. Follow Steps 2–6 above
 
 ---
 
@@ -321,8 +321,6 @@ SE workflow for a new engagement:
 Client-specific configuration (catalog source names, reference ID prefixes, ICDQ project
 IDs, proven scores, import history) is kept in `clients/` at the repo root — not in this
 guide. This keeps the guide reusable across engagements.
-
-- `clients/FCB_Financial_Services.md` — First Capital Bank Financial Services demo env
 
 ---
 
